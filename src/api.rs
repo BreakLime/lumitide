@@ -126,8 +126,7 @@ impl TidalClient {
     fn get(&self, path: &str, params: &[(&str, &str)]) -> Result<reqwest::blocking::Response> {
         let url = format!("{}/{}", API_BASE, path);
         let mut req = self.client.get(&url)
-            .header("Authorization", self.session.auth_header())
-            .header("X-Tidal-Token", crate::auth::CLIENT_ID);
+            .header("Authorization", self.session.auth_header());
         for &(k, v) in params {
             req = req.query(&[(k, v)]);
         }

@@ -8,7 +8,13 @@ use crate::preview;
 use crate::utils::is_saved;
 
 pub fn run(client: &mut TidalClient, debug: bool) -> Result<()> {
-    let mixes = client.mixes()?;
+    let mixes = client.mixes().map_err(|e| {
+        if e.to_string().contains("Forbidden") {
+            anyhow::anyhow!("Could not load mixes (access denied). Make sure you have a Tidal HiFi or HiFi Plus subscription and that Mixes are available in your region.")
+        } else {
+            e
+        }
+    })?;
 
     if mixes.is_empty() {
         println!("No mixes found.");
