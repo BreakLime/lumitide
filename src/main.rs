@@ -100,10 +100,24 @@ fn interactive_menu() -> Result<()> {
                 .report(false)
                 .interact_opt()?
             {
+                #[cfg(windows)]
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {
                     let mut cfg = cfg;
                     cfg.output_dir = path.to_string_lossy().into_owned();
                     config::save(&cfg)?;
+                }
+                #[cfg(not(windows))]
+                {
+                    use dialoguer::Input;
+                    let input: String = Input::new()
+                        .with_prompt("Download folder")
+                        .allow_empty(true)
+                        .interact_text()?;
+                    if !input.trim().is_empty() {
+                        let mut cfg = cfg;
+                        cfg.output_dir = input.trim().to_owned();
+                        config::save(&cfg)?;
+                    }
                 }
             }
         }

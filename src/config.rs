@@ -150,15 +150,28 @@ pub fn edit_interactive() -> Result<()> {
 
         match choice {
             0 => {
-                // Try native folder picker first, fall back to text input
-                let picked = rfd::FileDialog::new()
-                    .set_directory(&cfg.output_dir)
-                    .pick_folder();
-                if let Some(path) = picked {
-                    cfg.output_dir = path.to_string_lossy().into_owned();
-                    save(&cfg)?;
+                #[cfg(windows)]
+                {
+                    let picked = rfd::FileDialog::new()
+                        .set_directory(&cfg.output_dir)
+                        .pick_folder();
+                    if let Some(path) = picked {
+                        cfg.output_dir = path.to_string_lossy().into_owned();
+                        save(&cfg)?;
+                    }
                 }
-                // If the user cancelled the dialog, do nothing and return to menu
+                #[cfg(not(windows))]
+                {
+                    let input: String = Input::new()
+                        .with_prompt("Download folder")
+                        .with_initial_text(&cfg.output_dir)
+                        .allow_empty(true)
+                        .interact_text()?;
+                    if !input.trim().is_empty() {
+                        cfg.output_dir = input.trim().to_owned();
+                        save(&cfg)?;
+                    }
+                }
             }
             1 => {
                 let input: String = Input::new()
