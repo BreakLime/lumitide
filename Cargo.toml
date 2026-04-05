@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Console music player for Tidal"
 license = "MIT"
-repository = "https://github.com/yourusername/lumitide"
+repository = "https://github.com/BreakLime/lumitide"
 
 [[bin]]
 name = "lumitide"
