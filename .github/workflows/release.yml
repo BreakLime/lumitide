@@ -10,6 +10,7 @@ jobs:
     name: Build — ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: Windows
@@ -40,7 +41,7 @@ jobs:
 
       - name: Install Linux audio deps
         if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get install -y libasound2-dev
+        run: sudo apt-get install -y libasound2-dev libwayland-dev
 
       - name: Cache dependencies
         uses: actions/cache@v4
