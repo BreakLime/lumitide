@@ -1,0 +1,12 @@
+# Windows cross-compilation (x86_64-pc-windows-gnu target)
+#
+# If you are building on Windows with the GNU toolchain (mingw-w64), you need
+# to point Cargo at your GCC and ar binaries. Uncomment and adjust the paths
+# below to match your mingw-w64 installation.
+#
+# [target.x86_64-pc-windows-gnu]
+# linker = "C:/path/to/mingw64/bin/gcc.exe"
+# ar     = "C:/path/to/mingw64/bin/ar.exe"
+#
+# If you use the MSVC toolchain (recommended for Windows) or build on Linux/macOS,
+# this file can be left empty.
