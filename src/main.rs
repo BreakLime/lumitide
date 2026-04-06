@@ -7,6 +7,7 @@ mod local;
 mod metadata;
 mod mix;
 mod panel;
+mod playlist;
 mod preview;
 mod search;
 mod spectrum;
@@ -35,6 +36,11 @@ enum Commands {
     },
     /// Browse and play curated Tidal mixes
     Mix {
+        #[arg(long, hide = true)]
+        debug: bool,
+    },
+    /// Browse and play your Tidal playlists
+    Playlist {
         #[arg(long, hide = true)]
         debug: bool,
     },
@@ -73,6 +79,12 @@ fn main() -> Result<()> {
             let session = auth::get_session()?;
             let mut client = api::TidalClient::new(session);
             mix::run(&mut client, debug)
+        }
+
+        Some(Commands::Playlist { debug }) => {
+            let session = auth::get_session()?;
+            let mut client = api::TidalClient::new(session);
+            playlist::run(&mut client, debug)
         }
 
         Some(Commands::Local { debug }) => local::run(debug).map(|_| ()),
@@ -126,6 +138,7 @@ fn interactive_menu() -> Result<()> {
     let options = [
         "Search",
         "My mixes",
+        "My playlists",
         "Local files",
         "Config",
         "Quit",
@@ -164,6 +177,11 @@ fn interactive_menu() -> Result<()> {
                 mix::run(&mut client, false)?;
             }
             2 => {
+                let session = auth::get_session()?;
+                let mut client = api::TidalClient::new(session);
+                playlist::run(&mut client, false)?;
+            }
+            3 => {
                 match local::run(false)?.as_str() {
                     "mixes" => {
                         let session = auth::get_session()?;
@@ -184,7 +202,7 @@ fn interactive_menu() -> Result<()> {
                     _ => {}
                 }
             }
-            3 => {
+            4 => {
                 print!("\x1B[2J\x1B[H");
                 use std::io::Write;
                 let _ = std::io::stdout().flush();

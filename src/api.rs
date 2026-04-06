@@ -39,6 +39,12 @@ pub struct MixInfo {
     pub title: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct PlaylistInfo {
+    pub id: String,
+    pub title: String,
+}
+
 // ─── Raw API deserialization ───────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -323,6 +329,55 @@ impl TidalClient {
             &[
                 ("limit", "50"),
                 ("deviceType", "BROWSER"),
+                ("countryCode", &self.session.country_code),
+            ],
+        )?;
+        let data: Resp = resp.json()?;
+        Ok(data.items.into_iter()
+            .filter(|i| i.item_type == "track")
+            .filter_map(|i| i.item.map(Into::into))
+            .collect())
+    }
+
+    // ── Playlists ────────────────────────────────────────────────────────────
+
+    pub fn playlists(&self) -> Result<Vec<PlaylistInfo>> {
+        #[derive(Deserialize)]
+        struct Resp {
+            items: Vec<RawPlaylist>,
+        }
+        #[derive(Deserialize)]
+        struct RawPlaylist {
+            uuid: String,
+            title: String,
+        }
+
+        let resp = self.get(
+            &format!("users/{}/playlists", self.session.user_id),
+            &[("countryCode", &self.session.country_code), ("limit", "50")],
+        )?;
+        let data: Resp = resp.json()?;
+        Ok(data.items.into_iter()
+            .map(|p| PlaylistInfo { id: p.uuid, title: p.title })
+            .collect())
+    }
+
+    pub fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<TrackInfo>> {
+        #[derive(Deserialize)]
+        struct Resp {
+            items: Vec<PlaylistItem>,
+        }
+        #[derive(Deserialize)]
+        struct PlaylistItem {
+            #[serde(rename = "type")]
+            item_type: String,
+            item: Option<RawTrack>,
+        }
+
+        let resp = self.get(
+            &format!("playlists/{}/items", playlist_id),
+            &[
+                ("limit", "50"),
                 ("countryCode", &self.session.country_code),
             ],
         )?;
