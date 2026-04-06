@@ -119,6 +119,7 @@ lumitide config                        # open the config file in your editor
 | `↑` / `+` | Volume up |
 | `↓` / `-` | Volume down |
 | `d` | Download current track |
+| `r` | Start radio from current track |
 | `?` | Toggle controls overlay |
 | `q` / `Esc` | Quit |
 
