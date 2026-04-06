@@ -132,7 +132,9 @@ impl TidalClient {
         }
         let resp = req.send()?;
         if !resp.status().is_success() {
-            return Err(anyhow!("API error {}: {}", resp.status(), path));
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(anyhow!("API error {} on {}: {}", status, path, body));
         }
         Ok(resp)
     }

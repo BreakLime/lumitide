@@ -143,8 +143,7 @@ fn device_auth_flow() -> Result<Session> {
 
     let resp = client
         .post(format!("{}/device_authorization", AUTH_BASE))
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .body(format!("client_id={}&scope=r_usr+w_usr+w_sub", CLIENT_ID))
+        .form(&[("client_id", CLIENT_ID), ("scope", "r_usr w_usr w_sub")])
         .send()?
         .error_for_status()?;
 
@@ -165,15 +164,15 @@ fn device_auth_flow() -> Result<Session> {
         }
         std::thread::sleep(interval);
 
-        let body = format!(
-            "grant_type=urn:ietf:params:oauth:grant-type:device_code\
-             &device_code={}&client_id={}&client_secret={}",
-            device.device_code, CLIENT_ID, CLIENT_SECRET
-        );
         let poll = client
             .post(format!("{}/token", AUTH_BASE))
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(body)
+            .form(&[
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                ("device_code", &device.device_code),
+                ("client_id", CLIENT_ID),
+                ("client_secret", CLIENT_SECRET),
+                ("scope", "r_usr w_usr w_sub"),
+            ])
             .send()?;
 
         if poll.status().is_success() {
