@@ -6,7 +6,7 @@ Stream lossless audio from your Tidal account directly in the terminal, with alb
 
 ![Lumitide demo](assets/demo.gif)
 
-`→/n` next &nbsp;`←/p` prev &nbsp;`Space` pause &nbsp;`↑/+` vol up &nbsp;`↓/-` vol down &nbsp;`d` download &nbsp;`?` controls &nbsp;`q/Esc` quit or go back
+`→/n` next &nbsp;`←/p` prev &nbsp;`Space` pause &nbsp;`↑/+` vol up &nbsp;`↓/-` vol down &nbsp;`d` download &nbsp;`r` radio &nbsp;`?` controls &nbsp;`q/Esc` quit or go back
 
 ## Features
 
@@ -15,6 +15,8 @@ Stream lossless audio from your Tidal account directly in the terminal, with alb
 - **Spectrum visualizer** with peak-hold bars and beat/drop detection
 - **Album-art color theming** — title, spectrum bars, and transition arrows all take their color from the current cover
 - **Mix mode** — browse and play your curated Tidal mixes with animated track transitions
+- **Playlist mode** — browse and play your Tidal playlists
+- **Radio** — press `r` on any track to start a Tidal radio seeded from it
 - **Search** — find tracks by title
 - **Local playback** — shuffle local FLAC, MP3, and M4A files with the same UI
 - **Download** — save any streaming track to disk with a single keypress
