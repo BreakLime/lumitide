@@ -129,7 +129,7 @@ Run `lumitide config` to open the config menu. Settings are stored at
 | `cover_size` | `640` | Album art fetch size in pixels |
 | `search_limit` | `10` | Default number of search results |
 | `drop_detection` | `true` | Enable beat/drop detection and color cycling |
-| `always_color` | `false` | Always show album-art colors (not only during drops) |
+| `always_color` | `true` | Always show album-art colors (not only during drops) |
 | `calm_mode` | `false` | Static spectrum shape, no drop/beat effects |
 | `show_controls_hint` | `true` | Show "Press ? for ctrl" hint in the corner |
 

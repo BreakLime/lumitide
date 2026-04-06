@@ -44,7 +44,7 @@ impl Default for Config {
             cover_size:         640,
             volume:             0.5,
             drop_detection:     true,
-            always_color:       false,
+            always_color:       true,
             calm_mode:          false,
             show_controls_hint: true,
         }
@@ -93,7 +93,7 @@ mod tests {
         assert_eq!(cfg.cover_size, 640);
         assert!((cfg.volume - 0.5).abs() < f32::EPSILON);
         assert!(cfg.drop_detection);
-        assert!(!cfg.always_color);
+        assert!(cfg.always_color);
         assert!(!cfg.calm_mode);
         assert!(cfg.show_controls_hint);
     }
