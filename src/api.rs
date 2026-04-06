@@ -286,6 +286,8 @@ impl TidalClient {
         struct RawMix {
             id: String,
             title: String,
+            #[serde(rename = "mixType", default)]
+            mix_type: String,
         }
 
         let resp = self.get("pages/my_collection_my_mixes", &[
@@ -302,7 +304,9 @@ impl TidalClient {
                     for module in modules {
                         if let Some(paged) = module.paged_list {
                             for m in paged.items {
-                                mixes.push(MixInfo { id: m.id, title: m.title });
+                                if !m.mix_type.contains("VIDEO") {
+                                    mixes.push(MixInfo { id: m.id, title: m.title });
+                                }
                             }
                         }
                     }
