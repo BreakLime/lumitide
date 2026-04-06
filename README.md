@@ -30,15 +30,18 @@ Stream lossless audio from your Tidal account directly in the terminal, with alb
 
 ### Download (recommended)
 
-Grab the latest binary for your platform from the [Releases](https://github.com/BreakLime/lumitide/releases) page — no install needed, just download and run.
+Grab the latest release for your platform from the [Releases](https://github.com/BreakLime/lumitide/releases) page.
 
-| Platform | File |
-|----------|------|
-| Windows | `lumitide-windows.exe` |
-| Linux | `lumitide-linux` |
-| macOS | `lumitide-macos` |
+| Platform | File | Type |
+|----------|------|------|
+| Windows | `lumitide-installer.exe` | Installer — Start Menu shortcut, uninstaller, optional PATH |
+| Windows | `lumitide-windows.exe` | Portable — just download and run, no install needed |
+| Linux | `lumitide-linux` | Portable binary |
+| macOS | `lumitide-macos` | Portable binary |
 
-**Windows:** double-click the `.exe` or run it from a terminal.
+**Windows installer:** run `lumitide-installer.exe` and follow the wizard. Lumitide will appear in your Start Menu.
+
+**Windows portable:** double-click `lumitide-windows.exe` or run it from a terminal.
 
 **Linux / macOS:** make it executable first:
 ```sh
