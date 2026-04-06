@@ -864,6 +864,10 @@ fn play(
                             stop_all.store(true, Ordering::Relaxed);
                             break "prev".to_string();
                         }
+                        KeyCode::Char('r') | KeyCode::Char('R') => {
+                            stop_all.store(true, Ordering::Relaxed);
+                            break format!("radio:{}", track.id);
+                        }
                         KeyCode::Char(' ') => {
                             let p = paused.load(Ordering::Relaxed);
                             paused.store(!p, Ordering::Relaxed);

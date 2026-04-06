@@ -4,6 +4,7 @@ use dialoguer::Select;
 use crate::api::TidalClient;
 use crate::config;
 use crate::preview;
+use crate::radio;
 use crate::utils::is_saved;
 
 pub fn run(client: &mut TidalClient, query: &str, limit: u32, by_artist: bool) -> Result<()> {
@@ -54,8 +55,13 @@ pub fn run(client: &mut TidalClient, query: &str, limit: u32, by_artist: bool) -
         cursor = idx;
         let track = &tracks[idx];
         let saved = is_saved(&cfg.output_dir, &track.artist_name, &track.title);
-        preview::run(client, track.id, false, None, None, saved, None)?;
-        // Always return to the list regardless of how preview exited
+        let result = preview::run(client, track.id, false, None, None, saved, None)?;
+        if result.starts_with("radio:") {
+            if let Ok(id) = result["radio:".len()..].parse::<u64>() {
+                radio::run(client, id, false)?;
+            }
+            break;
+        }
     }
 
     Ok(())

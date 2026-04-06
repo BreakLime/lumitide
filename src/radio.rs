@@ -1,41 +1,15 @@
 use anyhow::Result;
-use dialoguer::Select;
 use std::sync::{Arc, Mutex};
 
 use crate::api::TidalClient;
 use crate::config;
 use crate::preview;
-use crate::radio;
 use crate::utils::is_saved;
 
-pub fn run(client: &mut TidalClient, debug: bool) -> Result<()> {
-    let mixes = client.mixes().map_err(|e| {
-        if e.to_string().contains("Forbidden") {
-            anyhow::anyhow!("Could not load mixes (access denied). Make sure you have a Tidal HiFi or HiFi Plus subscription and that Mixes are available in your region.")
-        } else {
-            e
-        }
-    })?;
-
-    if mixes.is_empty() {
-        println!("No mixes found.");
-        return Ok(());
-    }
-
-    let titles: Vec<&str> = mixes.iter().map(|m| m.title.as_str()).collect();
-    let Some(mix_idx) = Select::new()
-        .with_prompt("Select a mix")
-        .items(&titles)
-        .default(0)
-        .report(false)
-        .interact_opt()?
-    else { return Ok(()); };
-
-    let mix = &mixes[mix_idx];
-    let tracks = client.mix_tracks(&mix.id)?;
+pub fn run(client: &mut TidalClient, seed_track_id: u64, debug: bool) -> Result<()> {
+    let tracks = client.track_radio(seed_track_id)?;
 
     if tracks.is_empty() {
-        println!("No tracks in this mix.");
         return Ok(());
     }
 
@@ -47,7 +21,7 @@ pub fn run(client: &mut TidalClient, debug: bool) -> Result<()> {
     loop {
         let track = &tracks[idx];
         let saved = is_saved(&cfg.output_dir, &track.artist_name, &track.title);
-        let label = format!("{} / {}", idx + 1, tracks.len());
+        let label = format!("Radio  {} / {}", idx + 1, tracks.len());
 
         let result = preview::run(
             client,
@@ -66,8 +40,9 @@ pub fn run(client: &mut TidalClient, debug: bool) -> Result<()> {
             }
             "quit" => break,
             r if r.starts_with("radio:") => {
-                if let Ok(id) = r["radio:".len()..].parse::<u64>() {
-                    radio::run(client, id, debug)?;
+                // User pressed r again — re-seed from the new track
+                if let Ok(new_id) = r["radio:".len()..].parse::<u64>() {
+                    run(client, new_id, debug)?;
                 }
                 break;
             }

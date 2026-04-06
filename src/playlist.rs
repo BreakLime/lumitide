@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use crate::api::TidalClient;
 use crate::config;
 use crate::preview;
+use crate::radio;
 use crate::utils::is_saved;
 
 pub fn run(client: &mut TidalClient, debug: bool) -> Result<()> {
@@ -67,6 +68,12 @@ pub fn run(client: &mut TidalClient, debug: bool) -> Result<()> {
                 direction = Some("prev");
             }
             "quit" => break,
+            r if r.starts_with("radio:") => {
+                if let Ok(id) = r["radio:".len()..].parse::<u64>() {
+                    radio::run(client, id, debug)?;
+                }
+                break;
+            }
             _ => {
                 idx = (idx + 1) % tracks.len();
                 direction = Some("next");

@@ -8,6 +8,7 @@ mod metadata;
 mod mix;
 mod panel;
 mod playlist;
+mod radio;
 mod preview;
 mod search;
 mod spectrum;

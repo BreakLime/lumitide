@@ -69,7 +69,7 @@ pub fn render(frame: &mut Frame, state: &PanelState) {
         let hint_text = if state.is_local {
             "← prev  Spc pause  → next  ↑↓ vol  q/Esc quit"
         } else {
-            "← prev  Spc pause  → next  ↑↓ vol  d download  q/Esc quit"
+            "← prev  Spc pause  → next  ↑↓ vol  d download  r radio  q/Esc quit"
         };
         let controls = Title::from(Line::styled(hint_text, dim))
             .alignment(Alignment::Center);

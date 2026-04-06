@@ -388,6 +388,22 @@ impl TidalClient {
             .collect())
     }
 
+    // ── Radio ────────────────────────────────────────────────────────────────
+
+    pub fn track_radio(&self, track_id: u64) -> Result<Vec<TrackInfo>> {
+        #[derive(Deserialize)]
+        struct Resp {
+            items: Vec<RawTrack>,
+        }
+
+        let resp = self.get(
+            &format!("tracks/{}/radio", track_id),
+            &[("limit", "50"), ("countryCode", &self.session.country_code)],
+        )?;
+        let data: Resp = resp.json()?;
+        Ok(data.items.into_iter().map(Into::into).collect())
+    }
+
     // ── Cover image ──────────────────────────────────────────────────────────
 
     pub fn fetch_cover(&self, cover_id: &str, size: u32) -> Result<Vec<u8>> {
