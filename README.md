@@ -137,7 +137,7 @@ Run `lumitide config` to open the config menu. Settings are stored at
 | `search_limit` | `10` | Default number of search results |
 | `drop_detection` | `true` | Enable beat/drop detection and color cycling |
 | `always_color` | `true` | Always show album-art colors (not only during drops) |
-| `pywal` | `false` | Use [Pywal](https://github.com/dylanaraps/pywal) palette instead of album-art colors (reads `~/.cache/wal/colors.json`) |
+| `pywal` | `false` | Use [Pywal](https://github.com/dylanaraps/pywal) palette instead of album-art colors (reads `~/.cache/wal/colors.json` on all platforms) |
 | `calm_mode` | `false` | Static spectrum shape, no drop/beat effects |
 | `show_controls_hint` | `true` | Show "Press ? for ctrl" hint in the corner |
 

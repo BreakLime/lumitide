@@ -2,8 +2,12 @@ use crate::config;
 
 /// Reads ~/.cache/wal/colors.json (pywal) and returns color1–color3 as RGB tuples.
 /// Returns None if pywal is not installed or the file cannot be parsed.
+///
+/// Python pywal always writes to ~/.cache/wal/ on all platforms, so we prefer
+/// that path. On Linux this is identical to dirs::cache_dir(); on Windows/macOS
+/// it differs from the platform cache dir.
 pub fn load_pywal_palette() -> Option<Vec<(u8, u8, u8)>> {
-    let path = dirs::cache_dir()?.join("wal").join("colors.json");
+    let path = dirs::home_dir()?.join(".cache").join("wal").join("colors.json");
     let text = std::fs::read_to_string(path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&text).ok()?;
     let colors = json.get("colors")?;
