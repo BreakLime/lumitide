@@ -25,6 +25,8 @@ pub struct Config {
     #[serde(default)]
     pub always_color: bool,
     #[serde(default)]
+    pub pywal: bool,
+    #[serde(default)]
     pub calm_mode: bool,
     #[serde(default = "default_true")]
     pub show_controls_hint: bool,
@@ -45,6 +47,7 @@ impl Default for Config {
             volume:             0.5,
             drop_detection:     true,
             always_color:       true,
+            pywal:              false,
             calm_mode:          false,
             show_controls_hint: true,
         }
@@ -132,6 +135,7 @@ pub fn edit_interactive() -> Result<()> {
             format!("Search results      {}", cfg.search_limit),
             format!("Drop detection      {}", if cfg.drop_detection { "on" } else { "off" }),
             format!("Always color        {}", if cfg.always_color   { "on" } else { "off" }),
+            format!("Pywal colors        {}", if cfg.pywal          { "on" } else { "off" }),
             format!("Calm mode           {}", if cfg.calm_mode      { "on" } else { "off" }),
             format!("Controls hint       {}", if cfg.show_controls_hint { "on" } else { "off" }),
             "Back".to_string(),
@@ -186,8 +190,9 @@ pub fn edit_interactive() -> Result<()> {
             }
             2 => { cfg.drop_detection     = Confirm::new().with_prompt("Drop detection").default(cfg.drop_detection).interact()?;     save(&cfg)?; }
             3 => { cfg.always_color       = Confirm::new().with_prompt("Always color").default(cfg.always_color).interact()?;         save(&cfg)?; }
-            4 => { cfg.calm_mode          = Confirm::new().with_prompt("Calm mode").default(cfg.calm_mode).interact()?;               save(&cfg)?; }
-            5 => { cfg.show_controls_hint = Confirm::new().with_prompt("Controls hint").default(cfg.show_controls_hint).interact()?;  save(&cfg)?; }
+            4 => { cfg.pywal              = Confirm::new().with_prompt("Pywal colors").default(cfg.pywal).interact()?;                save(&cfg)?; }
+            5 => { cfg.calm_mode          = Confirm::new().with_prompt("Calm mode").default(cfg.calm_mode).interact()?;               save(&cfg)?; }
+            6 => { cfg.show_controls_hint = Confirm::new().with_prompt("Controls hint").default(cfg.show_controls_hint).interact()?;  save(&cfg)?; }
             _ => break,
         }
     }

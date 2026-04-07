@@ -1,5 +1,31 @@
 use crate::config;
 
+/// Reads ~/.cache/wal/colors.json (pywal) and returns color1–color3 as RGB tuples.
+/// Returns None if pywal is not installed or the file cannot be parsed.
+pub fn load_pywal_palette() -> Option<Vec<(u8, u8, u8)>> {
+    let path = dirs::cache_dir()?.join("wal").join("colors.json");
+    let text = std::fs::read_to_string(path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let colors = json.get("colors")?;
+    let palette: Vec<(u8, u8, u8)> = ["color1", "color2", "color3"]
+        .iter()
+        .filter_map(|key| {
+            let hex = colors.get(key)?.as_str()?;
+            parse_hex(hex)
+        })
+        .collect();
+    if palette.is_empty() { None } else { Some(palette) }
+}
+
+fn parse_hex(s: &str) -> Option<(u8, u8, u8)> {
+    let s = s.trim_start_matches('#');
+    if s.len() != 6 { return None; }
+    let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+    Some((r, g, b))
+}
+
 /// Centralised colour source — all UI components read from one instance
 /// so title, spectrum bars, and download bar always show identical colours.
 pub struct ColorState {

@@ -29,7 +29,7 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
 use crate::api::{TidalClient, TrackInfo};
-use crate::color_state::ColorState;
+use crate::color_state::{self, ColorState};
 use crate::config;
 use crate::cover::{render_cover, render_placeholder, ART_CHARS};
 use crate::panel::{self, PanelState};
@@ -101,6 +101,29 @@ fn drain_events() -> Option<&'static str> {
 ///   prev:    5/10  <<==================  (bright)
 ///                    <-----------        (dim)
 ///                    <-----------        (dim)
+
+/// Remap every braille-cell colour in a cover to the nearest palette entry.
+/// This gives the cover art a "pywal-themed" look matching the UI chrome.
+fn remap_cover_to_palette(lines: &[Line<'static>], palette: &[(u8, u8, u8)]) -> Vec<Line<'static>> {
+    lines.iter().map(|line| {
+        let spans: Vec<Span<'static>> = line.spans.iter().map(|span| {
+            let new_color = if let Some(Color::Rgb(r, g, b)) = span.style.fg {
+                let &(pr, pg, pb) = palette.iter().min_by_key(|&&(pr, pg, pb)| {
+                    let dr = r as i32 - pr as i32;
+                    let dg = g as i32 - pg as i32;
+                    let db = b as i32 - pb as i32;
+                    dr * dr + dg * dg + db * db
+                }).unwrap_or(&(255, 255, 255));
+                Color::Rgb(pr, pg, pb)
+            } else {
+                span.style.fg.unwrap_or(Color::White)
+            };
+            Span::styled(span.content.clone(), Style::new().fg(new_color))
+        }).collect();
+        Line::from(spans)
+    }).collect()
+}
+
 /// Interpolate between two RGB colors. t=0.0 → `from`, t=1.0 → `to`.
 fn lerp_color(from: (u8, u8, u8), to: (u8, u8, u8), t: f32) -> Color {
     let r = (from.0 as f32 + (to.0 as f32 - from.0 as f32) * t) as u8;
@@ -567,7 +590,16 @@ fn play(
     let cover_art = cover_bytes
         .map(|b| render_cover(b, art_chars))
         .unwrap_or_else(|| render_placeholder(art_chars));
-    let palette = cover_art.palette.clone();
+    let palette = if cfg.pywal {
+        color_state::load_pywal_palette().unwrap_or_else(|| cover_art.palette.clone())
+    } else {
+        cover_art.palette.clone()
+    };
+    let pywal_cover: Option<Vec<Line<'static>>> = if cfg.pywal {
+        Some(remap_cover_to_palette(&cover_art.color, &palette))
+    } else {
+        None
+    };
 
     // ── Shared state ──────────────────────────────────────────────────────────
     let spec_buf: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(vec![0.0f32; FFT_SIZE]));
@@ -813,7 +845,11 @@ fn play(
         }
 
         let bar_color = cs.current_color();
-        let cover_lines = if cs.colors_active() { &cover_art.color } else { &cover_art.mono };
+        let cover_lines = if cs.colors_active() {
+            pywal_cover.as_deref().unwrap_or(&cover_art.color)
+        } else {
+            &cover_art.mono
+        };
 
         let dl_stat = dl_status.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let dl_b = dl_bytes.load(Ordering::Relaxed);

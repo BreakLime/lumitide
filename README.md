@@ -14,6 +14,7 @@ Stream lossless audio from your Tidal account directly in the terminal, with alb
 - **Album cover art** rendered as Braille characters in the terminal
 - **Spectrum visualizer** with peak-hold bars and beat/drop detection
 - **Album-art color theming** — title, spectrum bars, and transition arrows all take their color from the current cover
+- **Pywal integration** — optionally sync the color scheme with your [Pywal](https://github.com/dylanaraps/pywal) wallpaper palette
 - **Mix mode** — browse and play your curated Tidal mixes with animated track transitions
 - **Playlist mode** — browse and play your Tidal playlists
 - **Radio** — press `r` on any track to start a Tidal radio seeded from it
@@ -136,6 +137,7 @@ Run `lumitide config` to open the config menu. Settings are stored at
 | `search_limit` | `10` | Default number of search results |
 | `drop_detection` | `true` | Enable beat/drop detection and color cycling |
 | `always_color` | `true` | Always show album-art colors (not only during drops) |
+| `pywal` | `false` | Use [Pywal](https://github.com/dylanaraps/pywal) palette instead of album-art colors (reads `~/.cache/wal/colors.json`) |
 | `calm_mode` | `false` | Static spectrum shape, no drop/beat effects |
 | `show_controls_hint` | `true` | Show "Press ? for ctrl" hint in the corner |
 
