@@ -124,6 +124,64 @@ fn remap_cover_to_palette(lines: &[Line<'static>], palette: &[(u8, u8, u8)]) -> 
     }).collect()
 }
 
+/// Register with the OS media controls (SMTC / MPRIS / MPRemoteCommandCenter).
+/// Returns None silently if the platform doesn't support it or initialisation fails.
+fn build_media_controls(
+    title: &str,
+    artist: &str,
+    cover_url: Option<&str>,
+    tx: std::sync::mpsc::Sender<souvlaki::MediaControlEvent>,
+) -> Option<souvlaki::MediaControls> {
+    use souvlaki::{MediaControls, MediaMetadata, MediaPlayback, PlatformConfig};
+
+    #[cfg(target_os = "windows")]
+    let config = {
+        // Windows Terminal has no Win32 HWND (virtual console), so we create a
+        // hidden 1×1 window purely to give SMTC a valid owner handle.
+        extern "system" {
+            fn CreateWindowExW(
+                ex_style: u32, class_name: *const u16, window_name: *const u16,
+                style: u32, x: i32, y: i32, w: i32, h: i32,
+                parent: *mut std::ffi::c_void, menu: *mut std::ffi::c_void,
+                instance: *mut std::ffi::c_void, param: *mut std::ffi::c_void,
+            ) -> *mut std::ffi::c_void;
+        }
+        let class: Vec<u16> = "Static\0".encode_utf16().collect();
+        let name:  Vec<u16> = "lumitide\0".encode_utf16().collect();
+        let hwnd = unsafe {
+            CreateWindowExW(0, class.as_ptr(), name.as_ptr(), 0, 0, 0, 1, 1,
+                std::ptr::null_mut(), std::ptr::null_mut(),
+                std::ptr::null_mut(), std::ptr::null_mut())
+        };
+        if hwnd.is_null() { return None; }
+        PlatformConfig { dbus_name: "", display_name: "Lumitide", hwnd: Some(hwnd) }
+    };
+
+    #[cfg(target_os = "macos")]
+    let config = PlatformConfig { dbus_name: "", display_name: "Lumitide", hwnd: None };
+
+    #[cfg(target_os = "linux")]
+    let config = PlatformConfig {
+        dbus_name: "org.mpris.MediaPlayer2.lumitide",
+        display_name: "Lumitide",
+        hwnd: None,
+    };
+
+    let mut controls = MediaControls::new(config).ok()?;
+    // attach must come first — it triggers SMTC session initialisation on Windows.
+    // set_metadata called before attach returns 0x80070032 (media type not initialized).
+    let _ = controls.attach(move |event| { let _ = tx.send(event); });
+    let _ = controls.set_playback(MediaPlayback::Playing { progress: None });
+    let _ = controls.set_metadata(MediaMetadata {
+        title: Some(title),
+        artist: Some(artist),
+        album: None,
+        cover_url,
+        duration: None,
+    });
+    Some(controls)
+}
+
 /// Interpolate between two RGB colors. t=0.0 → `from`, t=1.0 → `to`.
 fn lerp_color(from: (u8, u8, u8), to: (u8, u8, u8), t: f32) -> Color {
     let r = (from.0 as f32 + (to.0 as f32 - from.0 as f32) * t) as u8;
@@ -601,6 +659,27 @@ fn play(
         None
     };
 
+    // ── Media controls (SMTC / MPRIS / MPRemoteCommandCenter) ────────────────
+    // Write cover bytes to a temp file and pass a file:// URL.
+    // HTTPS URLs via CreateFromUri require a message pump for async download;
+    // GetFileFromPathAsync blocks synchronously and works without one.
+    // Keep _cover_tmp alive for the track duration so the file isn't deleted.
+    let _cover_tmp: Option<tempfile::NamedTempFile> = cover_bytes.and_then(|bytes| {
+        use std::io::Write;
+        let mut tmp = tempfile::Builder::new().suffix(".jpg").tempfile().ok()?;
+        tmp.write_all(bytes).ok()?;
+        Some(tmp)
+    });
+    let cover_url_str: Option<String> = _cover_tmp.as_ref().map(|tmp| {
+        // souvlaki strips "file://" then passes the remainder to GetFileFromPathAsync,
+        // which requires native Windows backslash paths — do NOT convert to forward slashes.
+        format!("file://{}", tmp.path().to_string_lossy())
+    });
+    let (media_tx, media_rx) = std::sync::mpsc::channel::<souvlaki::MediaControlEvent>();
+    let mut media_controls = build_media_controls(
+        &track.title, &track.artist_name, cover_url_str.as_deref(), media_tx,
+    );
+
     // ── Shared state ──────────────────────────────────────────────────────────
     let spec_buf: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(vec![0.0f32; FFT_SIZE]));
     let audio_buf: Arc<Mutex<VecDeque<f32>>> = Arc::new(Mutex::new(VecDeque::with_capacity(sample_rate as usize * 4)));
@@ -907,6 +986,13 @@ fn play(
                         KeyCode::Char(' ') => {
                             let p = paused.load(Ordering::Relaxed);
                             paused.store(!p, Ordering::Relaxed);
+                            if let Some(ref mut mc) = media_controls {
+                                let _ = mc.set_playback(if p {
+                                    souvlaki::MediaPlayback::Playing { progress: None }
+                                } else {
+                                    souvlaki::MediaPlayback::Paused { progress: None }
+                                });
+                            }
                         }
                         KeyCode::Up | KeyCode::Char('+') | KeyCode::Char('=') => {
                             {
@@ -985,6 +1071,42 @@ fn play(
                 }
             }
         }
+
+        // ── Media control events (OS media keys / Bluetooth) ─────────────────
+        let mut media_nav: Option<String> = None;
+        while let Ok(event) = media_rx.try_recv() {
+            use souvlaki::MediaControlEvent::*;
+            match event {
+                Play => {
+                    paused.store(false, Ordering::Relaxed);
+                    if let Some(ref mut mc) = media_controls {
+                        let _ = mc.set_playback(souvlaki::MediaPlayback::Playing { progress: None });
+                    }
+                }
+                Pause => {
+                    paused.store(true, Ordering::Relaxed);
+                    if let Some(ref mut mc) = media_controls {
+                        let _ = mc.set_playback(souvlaki::MediaPlayback::Paused { progress: None });
+                    }
+                }
+                Toggle => {
+                    let p = paused.load(Ordering::Relaxed);
+                    paused.store(!p, Ordering::Relaxed);
+                    if let Some(ref mut mc) = media_controls {
+                        let _ = mc.set_playback(if p {
+                            souvlaki::MediaPlayback::Playing { progress: None }
+                        } else {
+                            souvlaki::MediaPlayback::Paused { progress: None }
+                        });
+                    }
+                }
+                Next     => { stop_all.store(true, Ordering::Relaxed); media_nav = Some("next".into()); break; }
+                Previous => { stop_all.store(true, Ordering::Relaxed); media_nav = Some("prev".into()); break; }
+                Stop     => { stop_all.store(true, Ordering::Relaxed); media_nav = Some("quit".into()); break; }
+                _ => {}
+            }
+        }
+        if let Some(nav) = media_nav { break nav; }
 
         // Check if playback finished
         if playback_done.load(Ordering::Relaxed)
