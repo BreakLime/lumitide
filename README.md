@@ -21,13 +21,12 @@ Stream lossless audio from your Tidal account directly in the terminal, with alb
 - **Search** — find tracks by title
 - **Local playback** — shuffle local FLAC, MP3, and M4A files with the same UI
 - **Download** — save any streaming track to disk with a single keypress
-- **Media key support** — control playback via hardware media keys and Bluetooth headsets; track metadata and album art shown in Windows taskbar/lock screen and macOS Control Center
+- **Media key support** — control playback via media keys; track metadata and album art shown in Windows taskbar/lock screen and macOS Control Center
 
 ## Requirements
 
 - A [Tidal](https://tidal.com) HiFi or HiFi Plus subscription
 - A terminal with **truecolor** (24-bit) support (Windows Terminal, iTerm2, Alacritty, Kitty, etc.)
-- **Linux only:** D-Bus (included by default on all major desktop distributions)
 
 ## Installation
 
