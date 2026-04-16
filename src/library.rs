@@ -56,7 +56,7 @@ fn fuzzy_select<T>(
     labels: &mut Vec<String>,
     rx: &mpsc::Receiver<Result<Vec<T>>>,
     format_item: &dyn Fn(&T) -> String,
-) -> Result<Option<usize>> {
+) -> Result<Option<(usize, Vec<usize>)>> {
     let mut terminal = setup_terminal()?;
     let result = fuzzy_select_inner(prompt, empty_msg, items, labels, rx, format_item, &mut terminal);
     teardown_terminal(&mut terminal);
@@ -71,7 +71,7 @@ fn fuzzy_select_inner<T>(
     rx: &mpsc::Receiver<Result<Vec<T>>>,
     format_item: &dyn Fn(&T) -> String,
     terminal: &mut AppTerminal,
-) -> Result<Option<usize>> {
+) -> Result<Option<(usize, Vec<usize>)>> {
     let matcher = SkimMatcherV2::default();
     let mut query = String::new();
     let mut cursor: usize = 0;
@@ -250,7 +250,7 @@ fn fuzzy_select_inner<T>(
                     KeyCode::Esc => return Ok(None),
                     KeyCode::Enter => {
                         if !filtered.is_empty() {
-                            return Ok(Some(filtered[cursor]));
+                            return Ok(Some((filtered[cursor], filtered.clone())));
                         }
                     }
                     KeyCode::Up => {
@@ -386,7 +386,7 @@ fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
     let format_track = |t: &crate::api::TrackInfo| format!("{} — {}", t.title, t.artist_name);
 
     loop {
-        let Some(idx) = fuzzy_select(
+        let Some((idx, _)) = fuzzy_select(
             "Search tracks",
             "You don't have any liked tracks yet.\n\nLike some tracks in the Tidal app and they will appear here.\n\nPress any key to go back.",
             &mut items, &mut labels, &rx, &format_track,
@@ -415,7 +415,7 @@ fn saved_albums(client: &mut TidalClient, debug: bool) -> Result<()> {
 
     let format_album = |a: &crate::api::AlbumInfo| format!("{} — {}", a.title, a.artist_name);
 
-    let Some(album_idx) = fuzzy_select(
+    let Some((album_idx, _)) = fuzzy_select(
         "Search albums",
         "You don't have any saved albums yet.\n\nSave some albums in the Tidal app and they will appear here.\n\nPress any key to go back.",
         &mut items, &mut labels, &rx, &format_album,
@@ -479,7 +479,7 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
 
     let format_artist = |a: &crate::api::ArtistInfo| a.name.clone();
 
-    let Some(artist_idx) = fuzzy_select(
+    let Some((artist_idx, _)) = fuzzy_select(
         "Search artists",
         "You don't follow any artists yet.\n\nFollow some artists in the Tidal app and they will appear here.\n\nPress any key to go back.",
         &mut items, &mut labels, &rx, &format_artist,
@@ -509,7 +509,7 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
     let format_track = |t: &crate::api::TrackInfo| format!("{} — {}", t.title, t.artist_name);
 
     loop {
-        let Some(idx) = fuzzy_select("Search tracks", "", &mut track_items, &mut track_labels, &dummy_rx, &format_track)? else {
+        let Some((idx, _)) = fuzzy_select("Search tracks", "", &mut track_items, &mut track_labels, &dummy_rx, &format_track)? else {
             break;
         };
 
