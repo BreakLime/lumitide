@@ -343,6 +343,12 @@ where
     rx
 }
 
+fn static_receiver<T>() -> mpsc::Receiver<Result<Vec<T>>> {
+    let (tx, rx) = mpsc::channel();
+    drop(tx); // immediately disconnected — fuzzy_select sees loading = false at once
+    rx
+}
+
 // ── Public entry point ──────────────────────────────────────────────────────
 
 pub fn run(client: &mut TidalClient, debug: bool) -> Result<()> {
@@ -509,11 +515,8 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
         return Ok(());
     }
 
-    // For the artist's top tracks, use a second fuzzy select (non-streaming)
     let cfg = config::load();
-    let (dummy_tx, dummy_rx) = mpsc::channel::<Result<Vec<crate::api::TrackInfo>>>();
-    drop(dummy_tx); // immediately signal "done loading"
-
+    let track_rx = static_receiver::<crate::api::TrackInfo>();
     let mut track_items = tracks;
     let mut track_labels: Vec<String> = track_items
         .iter()
@@ -522,19 +525,35 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
 
     let format_track = |t: &crate::api::TrackInfo| format!("{} — {}", t.title, t.artist_name);
 
-    loop {
-        let Some((idx, _)) = fuzzy_select("Search tracks", "", &mut track_items, &mut track_labels, &dummy_rx, &format_track)? else {
+    'select: loop {
+        let Some((item_idx, filtered)) = fuzzy_select(
+            "Search tracks", "",
+            &mut track_items, &mut track_labels, &track_rx, &format_track,
+        )? else {
             break;
         };
 
-        let track = &track_items[idx];
-        let saved = is_saved(&cfg.output_dir, &track.artist_name, &track.title);
-        let result = preview::run(client, track.id, debug, None, None, saved, None)?;
-        if result.starts_with("radio:") {
-            if let Ok(id) = result["radio:".len()..].parse::<u64>() {
-                radio::run(client, id, debug)?;
+        let mut pos = filtered.iter().position(|&i| i == item_idx).unwrap_or(0);
+
+        loop {
+            if pos >= filtered.len() {
+                break; // end of filtered results → back to fuzzy select
             }
-            break;
+            let track = &track_items[filtered[pos]];
+            let saved = is_saved(&cfg.output_dir, &track.artist_name, &track.title);
+            let result = preview::run(client, track.id, debug, None, None, saved, None)?;
+            match result.as_str() {
+                "quit" => break, // back to fuzzy select
+                r if r.starts_with("radio:") => {
+                    if let Ok(id) = r["radio:".len()..].parse::<u64>() {
+                        radio::run(client, id, debug)?;
+                    }
+                    break 'select;
+                }
+                _ => {
+                    pos += 1; // natural end → advance
+                }
+            }
         }
     }
 
