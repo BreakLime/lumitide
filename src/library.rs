@@ -54,7 +54,7 @@ fn fuzzy_select<T>(
     empty_msg: &str,
     items: &mut Vec<T>,
     labels: &mut Vec<String>,
-    rx: &mpsc::Receiver<Vec<T>>,
+    rx: &mpsc::Receiver<Result<Vec<T>>>,
     format_item: &dyn Fn(&T) -> String,
 ) -> Result<Option<usize>> {
     let mut terminal = setup_terminal()?;
@@ -68,7 +68,7 @@ fn fuzzy_select_inner<T>(
     empty_msg: &str,
     items: &mut Vec<T>,
     labels: &mut Vec<String>,
-    rx: &mpsc::Receiver<Vec<T>>,
+    rx: &mpsc::Receiver<Result<Vec<T>>>,
     format_item: &dyn Fn(&T) -> String,
     terminal: &mut AppTerminal,
 ) -> Result<Option<usize>> {
@@ -79,6 +79,7 @@ fn fuzzy_select_inner<T>(
     // filtered holds indices into `items` that match the current query
     let mut filtered: Vec<usize> = (0..items.len()).collect();
     let mut loading = true;
+    let mut fetch_error = false;
 
     // Drain any stale key events from previous screens
     while event::poll(Duration::ZERO)? {
@@ -89,18 +90,22 @@ fn fuzzy_select_inner<T>(
         // Pull in any newly-arrived items from the background thread
         loop {
             match rx.try_recv() {
-                Ok(batch) => {
+                Ok(Ok(batch)) => {
                     for item in &batch {
                         labels.push(format_item(item));
                     }
                     let base = items.len();
                     items.extend(batch);
-                    // Add new items to filtered list if they match current query
                     for i in base..items.len() {
                         if query.is_empty() || matcher.fuzzy_match(&labels[i], &query).is_some() {
                             filtered.push(i);
                         }
                     }
+                }
+                Ok(Err(_)) => {
+                    fetch_error = true;
+                    loading = false;
+                    break;
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
@@ -208,8 +213,12 @@ fn fuzzy_select_inner<T>(
             f.render_widget(List::new(list_items), chunks[1]);
 
             // ── Loading indicator ────────────────────────────────────────
-            if loading {
-                let txt = format!("Loading... ({})", items.len());
+            if loading || fetch_error {
+                let txt = if fetch_error {
+                    format!("⚠ Partial results ({} loaded)", items.len())
+                } else {
+                    format!("Loading... ({})", items.len())
+                };
                 let w = txt.len() as u16;
                 let loading_area = ratatui::layout::Rect::new(
                     area.width.saturating_sub(w),
@@ -300,63 +309,28 @@ fn refilter(
 
 // ── Background fetch helpers ────────────────────────────────────────────────
 
-fn spawn_liked_tracks(session: crate::auth::Session) -> mpsc::Receiver<Vec<crate::api::TrackInfo>> {
+fn spawn_paginated<T, F>(session: crate::auth::Session, fetch: F) -> mpsc::Receiver<Result<Vec<T>>>
+where
+    T: Send + 'static,
+    F: Fn(&TidalClient, u64, u64) -> Result<(Vec<T>, u64)> + Send + 'static,
+{
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let client = TidalClient::new(session);
         let mut offset = 0u64;
         let limit = 100u64;
         loop {
-            match client.liked_tracks_page(offset, limit) {
-                Ok((tracks, total)) => {
-                    let len = tracks.len() as u64;
-                    if tx.send(tracks).is_err() { break; }
+            match fetch(&client, offset, limit) {
+                Ok((items, total)) => {
+                    let len = items.len() as u64;
+                    if tx.send(Ok(items)).is_err() { break; }
                     offset += len;
                     if len < limit || offset >= total { break; }
                 }
-                Err(_) => break,
-            }
-        }
-    });
-    rx
-}
-
-fn spawn_favorite_albums(session: crate::auth::Session) -> mpsc::Receiver<Vec<crate::api::AlbumInfo>> {
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let client = TidalClient::new(session);
-        let mut offset = 0u64;
-        let limit = 100u64;
-        loop {
-            match client.favorite_albums_page(offset, limit) {
-                Ok((albums, total)) => {
-                    let len = albums.len() as u64;
-                    if tx.send(albums).is_err() { break; }
-                    offset += len;
-                    if len < limit || offset >= total { break; }
+                Err(e) => {
+                    let _ = tx.send(Err(e));
+                    break;
                 }
-                Err(_) => break,
-            }
-        }
-    });
-    rx
-}
-
-fn spawn_favorite_artists(session: crate::auth::Session) -> mpsc::Receiver<Vec<crate::api::ArtistInfo>> {
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let client = TidalClient::new(session);
-        let mut offset = 0u64;
-        let limit = 100u64;
-        loop {
-            match client.favorite_artists_page(offset, limit) {
-                Ok((artists, total)) => {
-                    let len = artists.len() as u64;
-                    if tx.send(artists).is_err() { break; }
-                    offset += len;
-                    if len < limit || offset >= total { break; }
-                }
-                Err(_) => break,
             }
         }
     });
@@ -399,7 +373,7 @@ pub fn run(client: &mut TidalClient, debug: bool) -> Result<()> {
 // ── Library views ───────────────────────────────────────────────────────────
 
 fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
-    let rx = spawn_liked_tracks(client.session.clone());
+    let rx = spawn_paginated(client.session.clone(), |c, o, l| c.liked_tracks_page(o, l));
     let mut items: Vec<crate::api::TrackInfo> = Vec::new();
     let mut labels: Vec<String> = Vec::new();
     let cfg = config::load();
@@ -430,7 +404,7 @@ fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
 }
 
 fn saved_albums(client: &mut TidalClient, debug: bool) -> Result<()> {
-    let rx = spawn_favorite_albums(client.session.clone());
+    let rx = spawn_paginated(client.session.clone(), |c, o, l| c.favorite_albums_page(o, l));
     let mut items: Vec<crate::api::AlbumInfo> = Vec::new();
     let mut labels: Vec<String> = Vec::new();
 
@@ -494,7 +468,7 @@ fn saved_albums(client: &mut TidalClient, debug: bool) -> Result<()> {
 }
 
 fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
-    let rx = spawn_favorite_artists(client.session.clone());
+    let rx = spawn_paginated(client.session.clone(), |c, o, l| c.favorite_artists_page(o, l));
     let mut items: Vec<crate::api::ArtistInfo> = Vec::new();
     let mut labels: Vec<String> = Vec::new();
 
@@ -518,7 +492,7 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
 
     // For the artist's top tracks, use a second fuzzy select (non-streaming)
     let cfg = config::load();
-    let (dummy_tx, dummy_rx) = mpsc::channel::<Vec<crate::api::TrackInfo>>();
+    let (dummy_tx, dummy_rx) = mpsc::channel::<Result<Vec<crate::api::TrackInfo>>>();
     drop(dummy_tx); // immediately signal "done loading"
 
     let mut track_items = tracks;
