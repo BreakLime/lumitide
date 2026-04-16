@@ -102,4 +102,5 @@ jobs:
             lumitide-installer.exe
             lumitide-linux
             lumitide-macos
+          body_path: .github/RELEASE_NOTES.md
           generate_release_notes: true
