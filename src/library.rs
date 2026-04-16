@@ -389,6 +389,7 @@ fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
     let mut items: Vec<crate::api::TrackInfo> = Vec::new();
     let mut labels: Vec<String> = Vec::new();
     let cfg = config::load();
+    let volume = Arc::new(Mutex::new(cfg.volume));
 
     let format_track = |t: &crate::api::TrackInfo| format!("{} — {}", t.title, t.artist_name);
 
@@ -402,6 +403,7 @@ fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
         };
 
         let mut pos = filtered.iter().position(|&i| i == item_idx).unwrap_or(0);
+        let mut direction: Option<&str> = None;
 
         loop {
             if pos >= filtered.len() {
@@ -409,11 +411,13 @@ fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
             }
             let track = &items[filtered[pos]];
             let saved = is_saved(&cfg.output_dir, &track.artist_name, &track.title);
-            let result = preview::run(client, track.id, debug, None, None, saved, None)?;
+            let label = format!("{} / {}", pos + 1, filtered.len());
+            let result = preview::run(client, track.id, debug, Some(label), Some(volume.clone()), saved, direction)?;
             match result.as_str() {
                 "quit" => break, // back to fuzzy select
                 "prev" => {
                     pos = pos.saturating_sub(1);
+                    direction = Some("prev");
                 }
                 r if r.starts_with("radio:") => {
                     if let Ok(id) = r["radio:".len()..].parse::<u64>() {
@@ -423,6 +427,7 @@ fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
                 }
                 _ => {
                     pos += 1; // natural end or "next" → advance in filtered list
+                    direction = Some("next");
                 }
             }
         }
@@ -521,6 +526,7 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
     }
 
     let cfg = config::load();
+    let volume = Arc::new(Mutex::new(cfg.volume));
     let track_rx = static_receiver::<crate::api::TrackInfo>();
     let mut track_items = tracks;
     let mut track_labels: Vec<String> = track_items
@@ -539,6 +545,7 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
         };
 
         let mut pos = filtered.iter().position(|&i| i == item_idx).unwrap_or(0);
+        let mut direction: Option<&str> = None;
 
         loop {
             if pos >= filtered.len() {
@@ -546,11 +553,13 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
             }
             let track = &track_items[filtered[pos]];
             let saved = is_saved(&cfg.output_dir, &track.artist_name, &track.title);
-            let result = preview::run(client, track.id, debug, None, None, saved, None)?;
+            let label = format!("{} / {}", pos + 1, filtered.len());
+            let result = preview::run(client, track.id, debug, Some(label), Some(volume.clone()), saved, direction)?;
             match result.as_str() {
                 "quit" => break, // back to fuzzy select
                 "prev" => {
                     pos = pos.saturating_sub(1);
+                    direction = Some("prev");
                 }
                 r if r.starts_with("radio:") => {
                     if let Ok(id) = r["radio:".len()..].parse::<u64>() {
@@ -560,6 +569,7 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
                 }
                 _ => {
                     pos += 1; // natural end or "next" → advance
+                    direction = Some("next");
                 }
             }
         }
