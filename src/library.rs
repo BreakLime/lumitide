@@ -412,6 +412,9 @@ fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
             let result = preview::run(client, track.id, debug, None, None, saved, None)?;
             match result.as_str() {
                 "quit" => break, // back to fuzzy select
+                "prev" => {
+                    pos = pos.saturating_sub(1);
+                }
                 r if r.starts_with("radio:") => {
                     if let Ok(id) = r["radio:".len()..].parse::<u64>() {
                         radio::run(client, id, debug)?;
@@ -419,7 +422,7 @@ fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
                     break 'select;
                 }
                 _ => {
-                    pos += 1; // natural end → advance in filtered list
+                    pos += 1; // natural end or "next" → advance in filtered list
                 }
             }
         }
@@ -546,6 +549,9 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
             let result = preview::run(client, track.id, debug, None, None, saved, None)?;
             match result.as_str() {
                 "quit" => break, // back to fuzzy select
+                "prev" => {
+                    pos = pos.saturating_sub(1);
+                }
                 r if r.starts_with("radio:") => {
                     if let Ok(id) = r["radio:".len()..].parse::<u64>() {
                         radio::run(client, id, debug)?;
@@ -553,7 +559,7 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
                     break 'select;
                 }
                 _ => {
-                    pos += 1; // natural end → advance
+                    pos += 1; // natural end or "next" → advance
                 }
             }
         }
