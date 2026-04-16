@@ -76,7 +76,7 @@ $url = if ($Version) {
 }
 
 # --- Download ---
-$tmp = Join-Path $env:TEMP ("lumitide-" + [guid]::NewGuid() + ".exe")
+$tmp = Join-Path $InstallDir ("lumitide-" + [guid]::NewGuid() + ".exe")
 try {
     $prev = $ProgressPreference
     $ProgressPreference = if ($VerboseLog) { 'Continue' } else { 'SilentlyContinue' }

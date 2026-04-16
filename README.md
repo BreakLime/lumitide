@@ -43,7 +43,20 @@ curl -fsSL https://raw.githubusercontent.com/BreakLime/lumitide/main/install.sh 
 irm https://raw.githubusercontent.com/BreakLime/lumitide/main/install.ps1 | iex
 ```
 
-Both scripts download the latest prebuilt binary for your platform and drop it somewhere on your `PATH`. Pin a specific release with `--version vX.Y.Z` (bash) or `-Version vX.Y.Z` (PowerShell). Uninstall is a single-file delete: remove `~/.local/bin/lumitide` on Linux/macOS, or `%LOCALAPPDATA%\Programs\lumitide` on Windows.
+Both scripts download the latest prebuilt binary for your platform and drop it somewhere on your `PATH`.
+
+Pin a specific release:
+```sh
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/BreakLime/lumitide/main/install.sh | bash -s -- --version vX.Y.Z
+
+# Windows (PowerShell 7+)
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/BreakLime/lumitide/main/install.ps1))) -Version vX.Y.Z
+```
+
+To uninstall, remove the binary and undo the changes the installer made:
+- **Linux / macOS:** `rm ~/.local/bin/lumitide`
+- **Windows:** delete `%LOCALAPPDATA%\Programs\lumitide`, remove the `Lumitide` shortcut from `%APPDATA%\Microsoft\Windows\Start Menu\Programs`, and remove `%LOCALAPPDATA%\Programs\lumitide` from your User PATH (Settings → System → About → Advanced system settings → Environment Variables).
 
 ### Download (recommended)
 

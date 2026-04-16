@@ -57,7 +57,8 @@ else
 	URL="https://github.com/$REPO/releases/latest/download/$ASSET"
 fi
 
-TMP="$(mktemp)"
+mkdir -p "$INSTALL_DIR"
+TMP="$(mktemp "$INSTALL_DIR/lumitide.XXXXXX")"
 trap 'rm -f "$TMP"' EXIT
 
 if command -v curl >/dev/null 2>&1; then
@@ -90,7 +91,6 @@ fi
 
 [ -s "$TMP" ] || die "downloaded file is empty: $URL"
 
-mkdir -p "$INSTALL_DIR"
 chmod +x "$TMP"
 mv "$TMP" "$INSTALL_DIR/lumitide"
 
