@@ -45,6 +45,15 @@ pub struct PlaylistInfo {
     pub title: String,
 }
 
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // cover stored for future album art display
+pub struct AlbumInfo {
+    pub id: u64,
+    pub title: String,
+    pub artist_name: String,
+    pub cover: Option<String>,
+}
+
 // ─── Raw API deserialization ───────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -406,6 +415,86 @@ impl TidalClient {
         )?;
         let data: Resp = resp.json()?;
         Ok(data.items.into_iter().map(Into::into).collect())
+    }
+
+    // ── Library (favorites) ────────────────────────────────────────────────
+
+    pub fn album_tracks(&self, album_id: u64) -> Result<Vec<TrackInfo>> {
+        #[derive(Deserialize)]
+        struct Resp {
+            items: Vec<RawTrack>,
+        }
+
+        let resp = self.get(
+            &format!("albums/{}/tracks", album_id),
+            &[("countryCode", &self.session.country_code), ("limit", "100")],
+        )?;
+        let data: Resp = resp.json()?;
+        Ok(data.items.into_iter().map(Into::into).collect())
+    }
+
+    // ── Library (page-level, for streaming) ────────────────────────────────
+
+    /// Fetch a single page of liked tracks. Returns (tracks, total_count).
+    pub fn liked_tracks_page(&self, offset: u64, limit: u64) -> Result<(Vec<TrackInfo>, u64)> {
+        #[derive(Deserialize)]
+        struct Resp { items: Vec<FavItem>, #[serde(rename = "totalNumberOfItems")] total: Option<u64> }
+        #[derive(Deserialize)]
+        struct FavItem { item: RawTrack }
+
+        let offset_s = offset.to_string();
+        let limit_s = limit.to_string();
+        let resp = self.get(
+            &format!("users/{}/favorites/tracks", self.session.user_id),
+            &[("countryCode", &self.session.country_code), ("limit", &limit_s), ("offset", &offset_s)],
+        )?;
+        let data: Resp = resp.json()?;
+        let total = data.total.unwrap_or(0);
+        Ok((data.items.into_iter().map(|f| f.item.into()).collect(), total))
+    }
+
+    /// Fetch a single page of favorite albums. Returns (albums, total_count).
+    pub fn favorite_albums_page(&self, offset: u64, limit: u64) -> Result<(Vec<AlbumInfo>, u64)> {
+        #[derive(Deserialize)]
+        struct Resp { items: Vec<FavItem>, #[serde(rename = "totalNumberOfItems")] total: Option<u64> }
+        #[derive(Deserialize)]
+        struct FavItem { item: RawFavAlbum }
+        #[derive(Deserialize)]
+        struct RawFavAlbum { id: u64, title: String, artist: Option<RawArtist>, cover: Option<String> }
+
+        let offset_s = offset.to_string();
+        let limit_s = limit.to_string();
+        let resp = self.get(
+            &format!("users/{}/favorites/albums", self.session.user_id),
+            &[("countryCode", &self.session.country_code), ("limit", &limit_s), ("offset", &offset_s)],
+        )?;
+        let data: Resp = resp.json()?;
+        let total = data.total.unwrap_or(0);
+        let albums = data.items.into_iter().map(|f| AlbumInfo {
+            id: f.item.id, title: f.item.title,
+            artist_name: f.item.artist.map(|a| a.name).unwrap_or_default(),
+            cover: f.item.cover,
+        }).collect();
+        Ok((albums, total))
+    }
+
+    /// Fetch a single page of favorite artists. Returns (artists, total_count).
+    pub fn favorite_artists_page(&self, offset: u64, limit: u64) -> Result<(Vec<ArtistInfo>, u64)> {
+        #[derive(Deserialize)]
+        struct Resp { items: Vec<FavItem>, #[serde(rename = "totalNumberOfItems")] total: Option<u64> }
+        #[derive(Deserialize)]
+        struct FavItem { item: RawArtist }
+
+        let offset_s = offset.to_string();
+        let limit_s = limit.to_string();
+        let resp = self.get(
+            &format!("users/{}/favorites/artists", self.session.user_id),
+            &[("countryCode", &self.session.country_code), ("limit", &limit_s), ("offset", &offset_s)],
+        )?;
+        let data: Resp = resp.json()?;
+        let total = data.total.unwrap_or(0);
+        let artists = data.items.into_iter().map(|f| ArtistInfo { id: f.item.id, name: f.item.name }).collect();
+        Ok((artists, total))
     }
 
     // ── Cover image ──────────────────────────────────────────────────────────
