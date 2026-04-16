@@ -47,8 +47,9 @@ fn teardown_terminal(terminal: &mut AppTerminal) {
 /// Interactive fuzzy-select driven by ratatui.
 ///
 /// `items` / `labels` are pre-populated (possibly empty) and grow as new
-/// batches arrive on `rx`.  Returns `Some(index)` into `items` on Enter,
-/// or `None` on Escape.
+/// batches arrive on `rx`.  Returns `Some((index, filtered_snapshot))` on
+/// Enter — where `index` is the position in `items` and `filtered_snapshot`
+/// is the ordered list of visible indices at selection time — or `None` on Escape.
 fn fuzzy_select<T>(
     prompt: &str,
     empty_msg: &str,
