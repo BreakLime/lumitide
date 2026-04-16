@@ -386,8 +386,8 @@ fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
 
     let format_track = |t: &crate::api::TrackInfo| format!("{} — {}", t.title, t.artist_name);
 
-    loop {
-        let Some((idx, _)) = fuzzy_select(
+    'select: loop {
+        let Some((item_idx, filtered)) = fuzzy_select(
             "Search tracks",
             "You don't have any liked tracks yet.\n\nLike some tracks in the Tidal app and they will appear here.\n\nPress any key to go back.",
             &mut items, &mut labels, &rx, &format_track,
@@ -395,14 +395,27 @@ fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
             break;
         };
 
-        let track = &items[idx];
-        let saved = is_saved(&cfg.output_dir, &track.artist_name, &track.title);
-        let result = preview::run(client, track.id, debug, None, None, saved, None)?;
-        if result.starts_with("radio:") {
-            if let Ok(id) = result["radio:".len()..].parse::<u64>() {
-                radio::run(client, id, debug)?;
+        let mut pos = filtered.iter().position(|&i| i == item_idx).unwrap_or(0);
+
+        loop {
+            if pos >= filtered.len() {
+                break; // end of filtered results → back to fuzzy select
             }
-            break;
+            let track = &items[filtered[pos]];
+            let saved = is_saved(&cfg.output_dir, &track.artist_name, &track.title);
+            let result = preview::run(client, track.id, debug, None, None, saved, None)?;
+            match result.as_str() {
+                "quit" => break, // back to fuzzy select
+                r if r.starts_with("radio:") => {
+                    if let Ok(id) = r["radio:".len()..].parse::<u64>() {
+                        radio::run(client, id, debug)?;
+                    }
+                    break 'select;
+                }
+                _ => {
+                    pos += 1; // natural end → advance in filtered list
+                }
+            }
         }
     }
 
