@@ -150,7 +150,7 @@ fn device_auth_flow() -> Result<Session> {
     let device: DeviceResp = resp.json()?;
 
     println!("\nTo log in to Tidal, visit:");
-    println!("  {}", device.verification_uri);
+    println!("  \x1B]8;;{}\x1B\\{}\x1B]8;;\x1B\\", device.verification_uri, device.verification_uri);
     println!("And enter code: {}", device.user_code);
     println!("\nWaiting for authorisation...");
 
