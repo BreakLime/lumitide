@@ -117,9 +117,14 @@ fn fuzzy_select_inner<T>(
 
         // Empty state: loading finished with no items
         if !loading && items.is_empty() {
+            let msg = if fetch_error {
+                "Failed to load. Check your connection.\n\nPress any key to go back."
+            } else {
+                empty_msg
+            };
             terminal.draw(|f| {
                 let area = f.area();
-                f.render_widget(Paragraph::new(empty_msg), area);
+                f.render_widget(Paragraph::new(msg), area);
             })?;
             // Wait for any key to dismiss
             loop {
@@ -219,7 +224,7 @@ fn fuzzy_select_inner<T>(
                 } else {
                     format!("Loading... ({})", items.len())
                 };
-                let w = txt.len() as u16;
+                let w = txt.chars().count() as u16;
                 let loading_area = ratatui::layout::Rect::new(
                     area.width.saturating_sub(w),
                     area.height.saturating_sub(1),
