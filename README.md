@@ -15,6 +15,7 @@ Stream lossless audio from your Tidal account directly in the terminal, with alb
 - **Spectrum visualizer** with peak-hold bars and beat/drop detection
 - **Album-art color theming** — title, spectrum bars, and transition arrows all take their color from the current cover
 - **Pywal integration** — optionally sync the color scheme with your [Pywal](https://github.com/dylanaraps/pywal) wallpaper palette
+- **Library** — browse liked tracks, saved albums, and followed artists with fuzzy search; auto-advances through results with track counter and animated transitions
 - **Mix mode** — browse and play your curated Tidal mixes with animated track transitions
 - **Playlist mode** — browse and play your Tidal playlists
 - **Radio** — press `r` on any track to start a Tidal radio seeded from it
@@ -96,6 +97,8 @@ Running `lumitide` with no arguments opens an interactive menu:
 ```
 > Search
   My mixes
+  My playlists
+  My library
   Local files
   Config
   Quit
@@ -107,6 +110,7 @@ CLI usage is also fully supported:
 lumitide search "Netsky"               # search tracks by title
 lumitide search "Chase The Sun" -n 20  # increase result count
 lumitide mix                           # browse and play your Tidal mixes
+lumitide library                       # browse liked tracks, saved albums, followed artists
 lumitide local                         # shuffle local audio files
 lumitide config                        # open the config file in your editor
 ```
