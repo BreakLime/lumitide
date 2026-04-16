@@ -52,3 +52,11 @@ fn download_command_no_longer_exists() {
     let out = lumitide().arg("download").output().unwrap();
     assert!(!out.status.success());
 }
+
+#[test]
+fn library_help_exits_zero() {
+    let out = lumitide().args(["library", "--help"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("library") || stdout.contains("Browse"));
+}
