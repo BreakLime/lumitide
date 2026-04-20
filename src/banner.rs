@@ -1,10 +1,8 @@
 use crate::color_state;
 use crate::config;
 
-const BANNER: &str = "/\\  /\\  /\\
-\\/  \\/  \\/
-    /\\
-    \\/
+const BANNER: &str = "   <> <> <>
+      <>
 
 L U M I T I D E";
 
@@ -21,7 +19,7 @@ pub fn print_banner() {
     };
 
     let prefix = "  ";
-    let color = format!("\x1B[38;2;{};{};{}m\x1B[1m", accent.0, accent.1, accent.2);
+    let color = format!("\x1B[38;2;{};{};{}m", accent.0, accent.1, accent.2);
 
     for line in BANNER.lines() {
         println!("{prefix}{color}{line}\x1B[0m");
