@@ -403,11 +403,12 @@ fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
     let mut items: Vec<crate::api::TrackInfo> = Vec::new();
     let mut labels: Vec<String> = Vec::new();
     let cfg = config::load();
+    let volume = Arc::new(Mutex::new(cfg.volume));
 
     let format_track = |t: &crate::api::TrackInfo| format!("{} — {}", t.title, t.artist_name);
 
     loop {
-        let Some(idx) = fuzzy_select(
+        let Some(start_idx) = fuzzy_select(
             "Search tracks",
             "You don't have any liked tracks yet.\n\nLike some tracks in the Tidal app and they will appear here.\n\nPress any key to go back.",
             &mut items, &mut labels, &rx, &format_track,
@@ -415,14 +416,38 @@ fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
             break;
         };
 
-        let track = &items[idx];
-        let saved = is_saved(&cfg.output_dir, &track.artist_name, &track.title);
-        let result = preview::run(client, track.id, debug, None, None, saved, None)?;
-        if result.starts_with("radio:") {
-            if let Ok(id) = result["radio:".len()..].parse::<u64>() {
-                radio::run(client, id, debug)?;
+        let mut idx = start_idx;
+        let mut direction: Option<&str> = None;
+        loop {
+            let track = &items[idx];
+            let saved = is_saved(&cfg.output_dir, &track.artist_name, &track.title);
+            let label = format!("{} / {}", idx + 1, items.len());
+            let result = preview::run(
+                client,
+                track.id,
+                debug,
+                Some(label),
+                Some(volume.clone()),
+                saved,
+                direction,
+            )?;
+            match result.as_str() {
+                "prev" => {
+                    idx = (idx + items.len() - 1) % items.len();
+                    direction = Some("prev");
+                }
+                "quit" => break,
+                r if r.starts_with("radio:") => {
+                    if let Ok(id) = r["radio:".len()..].parse::<u64>() {
+                        radio::run(client, id, debug)?;
+                    }
+                    return Ok(());
+                }
+                _ => {
+                    idx = (idx + 1) % items.len();
+                    direction = Some("next");
+                }
             }
-            break;
         }
     }
 
