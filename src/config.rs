@@ -56,16 +56,32 @@ impl Default for Config {
 
 pub fn load() -> Config {
     let path = config_path();
+    let mut cfg = Config::default();
     if path.exists() {
         match std::fs::read_to_string(&path) {
             Ok(text) => match serde_json::from_str::<Config>(&text) {
-                Ok(cfg) => return cfg,
+                Ok(loaded) => cfg = loaded,
                 Err(e) => eprintln!("warning: config file is invalid and will be ignored: {e}"),
             },
             Err(e) => eprintln!("warning: could not read config file: {e}"),
         }
     }
-    Config::default()
+    cfg.output_dir = expand_tilde(&cfg.output_dir);
+    cfg
+}
+
+fn expand_tilde(path: &str) -> String {
+    if path == "~" {
+        return dirs::home_dir()
+            .map(|h| h.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string());
+    }
+    if let Some(rest) = path.strip_prefix("~/") {
+        return dirs::home_dir()
+            .map(|h| h.join(rest).to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string());
+    }
+    path.to_string()
 }
 
 pub fn save_volume(volume: f32) -> Result<()> {
@@ -119,6 +135,28 @@ mod tests {
         assert!((cfg.volume - 0.8).abs() < 1e-6);
         assert_eq!(cfg.search_limit, 10);
         assert_eq!(cfg.output_dir, ".");
+    }
+
+    #[test]
+    fn expand_tilde_resolves_bare_tilde_to_home() {
+        let home = dirs::home_dir().expect("home dir available");
+        assert_eq!(expand_tilde("~"), home.to_string_lossy());
+    }
+
+    #[test]
+    fn expand_tilde_resolves_tilde_slash_path() {
+        let home = dirs::home_dir().expect("home dir available");
+        let expected = home.join("Downloads").join("DJ").to_string_lossy().into_owned();
+        assert_eq!(expand_tilde("~/Downloads/DJ"), expected);
+    }
+
+    #[test]
+    fn expand_tilde_leaves_other_paths_unchanged() {
+        assert_eq!(expand_tilde("."), ".");
+        assert_eq!(expand_tilde("/absolute/path"), "/absolute/path");
+        assert_eq!(expand_tilde("relative/path"), "relative/path");
+        assert_eq!(expand_tilde("/foo/~bar"), "/foo/~bar");
+        assert_eq!(expand_tilde("~user"), "~user");
     }
 }
 
