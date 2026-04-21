@@ -1026,7 +1026,7 @@ fn play(
                                         let temp_path = path.to_path_buf();
                                         let track_clone = track.clone();
                                         let cover_owned: Option<Vec<u8>> = cover_bytes.map(|b| b.to_vec());
-                                        let out_dir = cfg.output_dir.clone();
+                                        let out_dir = cfg.output_path();
                                         let dl_status2 = dl_status.clone();
                                         let dummy = Arc::new(AtomicU64::new(0));
                                         thread::spawn(move || {
@@ -1047,7 +1047,7 @@ fn play(
                                         let track_clone = track.clone();
                                         let cover_owned: Option<Vec<u8>> = cover_bytes.map(|b| b.to_vec());
                                         let dl_done = download_done.clone();
-                                        let out_dir = cfg.output_dir.clone();
+                                        let out_dir = cfg.output_path();
                                         let dl_status2 = dl_status.clone();
                                         let dummy = Arc::new(AtomicU64::new(0));
                                         thread::spawn(move || {

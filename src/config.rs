@@ -66,8 +66,13 @@ pub fn load() -> Config {
             Err(e) => eprintln!("warning: could not read config file: {e}"),
         }
     }
-    cfg.output_dir = expand_tilde(&cfg.output_dir);
     cfg
+}
+
+impl Config {
+    pub fn output_path(&self) -> String {
+        expand_tilde(&self.output_dir)
+    }
 }
 
 fn expand_tilde(path: &str) -> String {
@@ -78,7 +83,7 @@ fn expand_tilde(path: &str) -> String {
     }
     if let Some(rest) = path.strip_prefix("~/") {
         return dirs::home_dir()
-            .map(|h| h.join(rest).to_string_lossy().into_owned())
+            .map(|h| rest.split('/').fold(h, |acc, part| acc.join(part)).to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string());
     }
     path.to_string()
@@ -195,7 +200,7 @@ pub fn edit_interactive() -> Result<()> {
                 #[cfg(windows)]
                 {
                     let picked = rfd::FileDialog::new()
-                        .set_directory(&cfg.output_dir)
+                        .set_directory(&cfg.output_path())
                         .pick_folder();
                     if let Some(path) = picked {
                         cfg.output_dir = path.to_string_lossy().into_owned();

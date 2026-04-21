@@ -15,7 +15,8 @@ const SUPPORTED: &[&str] = &["flac", "mp3", "m4a"];
 pub fn run(debug: bool) -> Result<String> {
     loop {
         let cfg = config::load();
-        let dir = std::path::Path::new(&cfg.output_dir);
+        let out = cfg.output_path();
+        let dir = std::path::Path::new(&out);
 
         let (files, _skipped) = match std::fs::read_dir(dir) {
             Ok(entries) => {
@@ -40,7 +41,7 @@ pub fn run(debug: bool) -> Result<String> {
         };
 
         if files.is_empty() {
-            return no_files_menu(&cfg.output_dir);
+            return no_files_menu(&out);
         }
 
         // Files found — play them

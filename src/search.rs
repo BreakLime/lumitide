@@ -54,7 +54,7 @@ pub fn run(client: &mut TidalClient, query: &str, limit: u32, by_artist: bool) -
 
         cursor = idx;
         let track = &tracks[idx];
-        let saved = is_saved(&cfg.output_dir, &track.artist_name, &track.title);
+        let saved = is_saved(&cfg.output_path(), &track.artist_name, &track.title);
         let result = preview::run(client, track.id, false, None, None, saved, None)?;
         if result.starts_with("radio:") {
             if let Ok(id) = result["radio:".len()..].parse::<u64>() {

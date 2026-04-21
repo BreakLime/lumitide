@@ -20,7 +20,7 @@ pub fn run(client: &mut TidalClient, seed_track_id: u64, debug: bool) -> Result<
 
     loop {
         let track = &tracks[idx];
-        let saved = is_saved(&cfg.output_dir, &track.artist_name, &track.title);
+        let saved = is_saved(&cfg.output_path(), &track.artist_name, &track.title);
         let label = format!("Radio  {} / {}", idx + 1, tracks.len());
 
         let result = preview::run(
