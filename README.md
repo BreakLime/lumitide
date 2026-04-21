@@ -31,6 +31,33 @@ Stream lossless audio from your Tidal account directly in the terminal, with alb
 
 ## Installation
 
+### Quick install (one-liner)
+
+**Linux / macOS:**
+```sh
+curl -fsSL https://raw.githubusercontent.com/BreakLime/lumitide/main/install.sh | bash
+```
+
+**Windows (PowerShell 7+):**
+```powershell
+irm https://raw.githubusercontent.com/BreakLime/lumitide/main/install.ps1 | iex
+```
+
+Both scripts download the latest prebuilt binary for your platform and drop it somewhere on your `PATH`.
+
+Pin a specific release:
+```sh
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/BreakLime/lumitide/main/install.sh | bash -s -- --version vX.Y.Z
+
+# Windows (PowerShell 7+)
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/BreakLime/lumitide/main/install.ps1))) -Version vX.Y.Z
+```
+
+To uninstall, remove the binary and undo the changes the installer made:
+- **Linux / macOS:** `rm ~/.local/bin/lumitide`
+- **Windows:** delete `%LOCALAPPDATA%\Programs\lumitide`, remove the `Lumitide` shortcut from `%APPDATA%\Microsoft\Windows\Start Menu\Programs`, and remove `%LOCALAPPDATA%\Programs\lumitide` from your User PATH (Settings → System → About → Advanced system settings → Environment Variables).
+
 ### Download (recommended)
 
 Grab the latest release for your platform from the [Releases](https://github.com/BreakLime/lumitide/releases) page.
