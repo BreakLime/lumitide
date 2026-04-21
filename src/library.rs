@@ -410,7 +410,7 @@ fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
                 break; // end of filtered results → back to fuzzy select
             }
             let track = &items[filtered[pos]];
-            let saved = is_saved(&cfg.output_dir, &track.artist_name, &track.title);
+            let saved = is_saved(&cfg.output_path(), &track.artist_name, &track.title);
             let label = format!("{} / {}", pos + 1, filtered.len());
             let result = preview::run(client, track.id, debug, Some(label), Some(volume.clone()), saved, direction)?;
             match result.as_str() {
@@ -467,7 +467,7 @@ fn saved_albums(client: &mut TidalClient, debug: bool) -> Result<()> {
 
         loop {
             let track = &tracks[idx];
-            let saved = is_saved(&cfg.output_dir, &track.artist_name, &track.title);
+            let saved = is_saved(&cfg.output_path(), &track.artist_name, &track.title);
             let label = format!("{} / {}", idx + 1, tracks.len());
 
             let result = preview::run(
@@ -552,7 +552,7 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
                 break; // end of filtered results → back to fuzzy select
             }
             let track = &track_items[filtered[pos]];
-            let saved = is_saved(&cfg.output_dir, &track.artist_name, &track.title);
+            let saved = is_saved(&cfg.output_path(), &track.artist_name, &track.title);
             let label = format!("{} / {}", pos + 1, filtered.len());
             let result = preview::run(client, track.id, debug, Some(label), Some(volume.clone()), saved, direction)?;
             match result.as_str() {
