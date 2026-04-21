@@ -1,10 +1,17 @@
 ## What's new
 
-### ASCII banner on start page (#5)
-Displays a styled `L U M I T I D E` wordmark above the menu on launch. Honors pywal accent color when enabled, otherwise uses cyan. Thanks @BrettKinny!
+### One-liner install scripts (#2)
+Install lumitide with a single command on Linux, macOS, and Windows. Binaries are verified against a `sha256sums.txt` checksum file published with each release. Thanks @BrettKinny!
 
-### Tilde expansion in download folder path (#7)
-Typing `~/Downloads` at the folder prompt now correctly resolves to your home directory instead of creating a literal `~` folder. Thanks @BrettKinny!
+**Linux / macOS:**
+```sh
+curl -fsSL https://raw.githubusercontent.com/BreakLime/lumitide/main/install.sh | bash
+```
+
+**Windows (PowerShell 7+):**
+```powershell
+irm https://raw.githubusercontent.com/BreakLime/lumitide/main/install.ps1 | iex
+```
 
 ---
 
