@@ -38,7 +38,7 @@ Stream lossless audio from your Tidal account directly in the terminal, with alb
 curl -fsSL https://raw.githubusercontent.com/BreakLime/lumitide/main/install.sh | bash
 ```
 
-**Windows (PowerShell 7+):**
+**Windows (PowerShell):**
 ```powershell
 irm https://raw.githubusercontent.com/BreakLime/lumitide/main/install.ps1 | iex
 ```
@@ -50,7 +50,7 @@ Pin a specific release:
 # Linux / macOS
 curl -fsSL https://raw.githubusercontent.com/BreakLime/lumitide/main/install.sh | bash -s -- --version vX.Y.Z
 
-# Windows (PowerShell 7+)
+# Windows (PowerShell)
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/BreakLime/lumitide/main/install.ps1))) -Version vX.Y.Z
 ```
 

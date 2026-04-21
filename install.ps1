@@ -13,8 +13,6 @@
     Skip shortcut:  .\install.ps1 -NoShortcut
     Verbose:        .\install.ps1 -VerboseLog
 #>
-#Requires -Version 7.0
-
 param(
     [string]$Version,
     [string]$Prefix,
@@ -23,12 +21,6 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-
-# #Requires -Version 7.0 is silently ignored when piped through iex — check explicitly.
-if ($PSVersionTable.PSVersion.Major -lt 7) {
-    Write-Host "error: PowerShell 7+ is required. Download it from https://aka.ms/powershell" -ForegroundColor Red
-    exit 1
-}
 
 $Repo = 'BreakLime/lumitide'
 $Asset = 'lumitide-windows.exe'
