@@ -91,6 +91,38 @@ fi
 
 [ -s "$TMP" ] || die "downloaded file is empty: $URL"
 
+# --- Checksum verification ---
+CHECKSUMS_URL="${URL%/*}/sha256sums.txt"
+TMP_SUMS="$(mktemp)"
+trap 'rm -f "$TMP" "$TMP_SUMS"' EXIT
+GOT_SUMS=0
+if command -v curl >/dev/null 2>&1; then
+	curl -fsSL --retry 2 -o "$TMP_SUMS" "$CHECKSUMS_URL" 2>/dev/null && GOT_SUMS=1 || true
+elif command -v wget >/dev/null 2>&1; then
+	wget -q -O "$TMP_SUMS" "$CHECKSUMS_URL" 2>/dev/null && GOT_SUMS=1 || true
+fi
+if [ "$GOT_SUMS" = 1 ] && [ -s "$TMP_SUMS" ]; then
+	EXPECTED="$(grep "  $ASSET\$" "$TMP_SUMS" | awk '{print $1}')"
+	if [ -n "$EXPECTED" ]; then
+		if command -v sha256sum >/dev/null 2>&1; then
+			ACTUAL="$(sha256sum "$TMP" | awk '{print $1}')"
+		elif command -v shasum >/dev/null 2>&1; then
+			ACTUAL="$(shasum -a 256 "$TMP" | awk '{print $1}')"
+		else
+			echo "warning: no sha256 tool found — skipping checksum verification" >&2
+			EXPECTED=""
+		fi
+		if [ -n "$EXPECTED" ]; then
+			[ "$EXPECTED" = "$ACTUAL" ] || die "checksum mismatch for $ASSET (expected $EXPECTED, got $ACTUAL)"
+			[ "$VERBOSE" = 1 ] && echo "Checksum OK: $ACTUAL"
+		fi
+	else
+		echo "warning: $ASSET not found in sha256sums.txt — skipping verification" >&2
+	fi
+else
+	echo "warning: could not fetch sha256sums.txt — skipping checksum verification" >&2
+fi
+
 chmod +x "$TMP"
 mv "$TMP" "$INSTALL_DIR/lumitide"
 

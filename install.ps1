@@ -24,6 +24,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# #Requires -Version 7.0 is silently ignored when piped through iex — check explicitly.
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    Write-Host "error: PowerShell 7+ is required. Download it from https://aka.ms/powershell" -ForegroundColor Red
+    exit 1
+}
+
 $Repo = 'BreakLime/lumitide'
 $Asset = 'lumitide-windows.exe'
 
@@ -99,6 +105,27 @@ try {
         Abort "downloaded file is empty: $url"
     }
 
+    # --- Checksum verification ---
+    $checksumsUrl = $url -replace '[^/]+$', 'sha256sums.txt'
+    $tmpSums = Join-Path $env:TEMP ("lumitide-sums-" + [guid]::NewGuid() + ".txt")
+    try {
+        Invoke-WebRequest -Uri $checksumsUrl -OutFile $tmpSums -UseBasicParsing -ErrorAction Stop
+        $expected = (Get-Content $tmpSums | Where-Object { $_ -match "\s$([regex]::Escape($Asset))$" }) -replace '^(\S+)\s.*', '$1'
+        if ($expected) {
+            $actual = (Get-FileHash $tmp -Algorithm SHA256).Hash.ToLower()
+            if ($actual -ne $expected.ToLower()) {
+                Abort "checksum mismatch for $Asset`n  expected: $expected`n  got:      $actual"
+            }
+            if ($VerboseLog) { Write-Host "Checksum OK: $actual" }
+        } else {
+            Write-Host "warning: $Asset not found in sha256sums.txt — skipping verification" -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "warning: could not fetch sha256sums.txt — skipping checksum verification" -ForegroundColor Yellow
+    } finally {
+        if (Test-Path $tmpSums) { Remove-Item -Force $tmpSums -ErrorAction SilentlyContinue }
+    }
+
     # --- Install (atomic-ish) ---
     $dest = Join-Path $InstallDir 'lumitide.exe'
     try {
@@ -114,7 +141,7 @@ try {
 $pathAdded = $false
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $userPathEntries = if ($userPath) { $userPath -split ';' } else { @() }
-if ($userPathEntries -notcontains $InstallDir) {
+if ($userPathEntries -inotcontains $InstallDir) {
     $new = if ([string]::IsNullOrEmpty($userPath)) {
         $InstallDir
     } else {
