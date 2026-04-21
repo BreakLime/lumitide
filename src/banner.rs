@@ -12,7 +12,7 @@ pub fn print_banner() {
     let cfg = config::load();
     let accent = if cfg.pywal {
         color_state::load_pywal_palette()
-            .and_then(|p| p.first().copied())
+            .and_then(|p| p.get(1).copied())
             .unwrap_or(DEFAULT_ACCENT)
     } else {
         DEFAULT_ACCENT
