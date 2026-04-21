@@ -94,6 +94,9 @@ jobs:
         with:
           merge-multiple: true
 
+      - name: Generate checksums
+        run: sha256sum lumitide-linux lumitide-macos lumitide-windows.exe > sha256sums.txt
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -102,5 +105,6 @@ jobs:
             lumitide-installer.exe
             lumitide-linux
             lumitide-macos
+            sha256sums.txt
           body_path: .github/RELEASE_NOTES.md
           generate_release_notes: true
