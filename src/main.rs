@@ -1,5 +1,6 @@
 mod api;
 mod auth;
+mod banner;
 mod color_state;
 mod config;
 mod cover;
@@ -163,6 +164,8 @@ fn interactive_menu() -> Result<()> {
         use std::io::Write;
         print!("\x1B[2J\x1B[H");
         let _ = std::io::stdout().flush();
+
+        banner::print_banner();
 
         let Some(choice) = Select::new()
             .items(&options)
