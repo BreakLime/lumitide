@@ -942,6 +942,7 @@ fn play(
         );
 
         let vol = *volume.lock().unwrap_or_else(|e| e.into_inner());
+        let queue_status = crate::DOWNLOAD_QUEUE.get().and_then(|q| q.status());
         let panel_state = PanelState {
             cover_lines,
             track_name: &track.title,
@@ -958,7 +959,7 @@ fn play(
             is_local,
             show_controls,
             show_controls_hint: cfg.show_controls_hint,
-            queue_status: None,
+            queue_status,
         };
 
         terminal.draw(|f| panel::render(f, &panel_state))?;
