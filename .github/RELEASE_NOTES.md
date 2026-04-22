@@ -1,17 +1,26 @@
 ## What's new
 
-### One-liner install scripts (#2)
-Install lumitide with a single command on Linux, macOS, and Windows. Binaries are verified against a `sha256sums.txt` checksum file published with each release. Thanks @BrettKinny!
+### Background download queue
 
-**Linux / macOS:**
-```sh
-curl -fsSL https://raw.githubusercontent.com/BreakLime/lumitide/main/install.sh | bash
-```
+Press `d` on any album, mix, playlist, or search result to queue it for
+background download — without interrupting playback or navigation. Tracks
+download one by one while you keep browsing.
 
-**Windows (PowerShell 7+):**
-```powershell
-irm https://raw.githubusercontent.com/BreakLime/lumitide/main/install.ps1 | iex
-```
+A live `⬇ Artist - Title  N / M` indicator appears at the bottom-right of
+every screen while the queue is running. The counter grows as you queue
+more items.
+
+### Consistent list navigation
+
+All list views (library, search, mixes, playlists) now use the same
+keyboard controls:
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` or `k` / `j` | Navigate |
+| `Enter` | Play |
+| `d` | Queue for background download |
+| `Esc` / `q` | Go back |
 
 ---
 
