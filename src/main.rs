@@ -4,6 +4,7 @@ mod banner;
 mod color_state;
 mod config;
 mod cover;
+mod download_queue;
 mod library;
 mod local;
 mod metadata;
