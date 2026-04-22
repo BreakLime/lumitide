@@ -550,78 +550,83 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
 
     let format_artist = |a: &crate::api::ArtistInfo| a.name.clone();
 
-    let artist_idx = match fuzzy_select(
-        "Search artists",
-        "You don't follow any artists yet.\n\nFollow some artists in the Tidal app and they will appear here.\n\nPress any key to go back.",
-        &mut items, &mut labels, &rx, &format_artist,
-    )? {
-        None | Some(FuzzyAction::Queue(_)) => return Ok(()),
-        Some(FuzzyAction::Select(idx, _)) => idx,
-    };
-
-    let artist = &items[artist_idx];
-    let tracks = client.artist_top_tracks(artist.id, 20)?;
-
-    if tracks.is_empty() {
-        println!("No top tracks found for this artist.");
-        return Ok(());
-    }
-
-    let cfg = config::load();
-    let volume = Arc::new(Mutex::new(cfg.volume));
-    let track_rx = static_receiver::<crate::api::TrackInfo>();
-    let mut track_items = tracks;
-    let mut track_labels: Vec<String> = track_items
-        .iter()
-        .map(|t| format!("{} — {}", t.title, t.artist_name))
-        .collect();
-
-    let format_track = |t: &crate::api::TrackInfo| format!("{} — {}", t.title, t.artist_name);
-
-    'select: loop {
-        let (item_idx, filtered) = match fuzzy_select(
-            "Search tracks", "",
-            &mut track_items, &mut track_labels, &track_rx, &format_track,
+    loop {
+        let artist_idx = match fuzzy_select(
+            "Search artists",
+            "You don't follow any artists yet.\n\nFollow some artists in the Tidal app and they will appear here.\n\nPress any key to go back.",
+            &mut items, &mut labels, &rx, &format_artist,
         )? {
-            None => break,
-            Some(FuzzyAction::Queue(idx)) => {
-                if let Some(queue) = crate::DOWNLOAD_QUEUE.get() {
-                    queue.push_tracks(vec![track_items[idx].clone()], client.session.clone(), cfg.output_path());
-                }
-                continue 'select;
-            }
-            Some(FuzzyAction::Select(idx, filtered)) => (idx, filtered),
+            None => return Ok(()),
+            Some(FuzzyAction::Queue(_)) => continue,
+            Some(FuzzyAction::Select(idx, _)) => idx,
         };
 
-        let mut pos = filtered.iter().position(|&i| i == item_idx).unwrap_or(0);
-        let mut direction: Option<&str> = None;
+        let artist = &items[artist_idx];
+        let tracks = client.artist_top_tracks(artist.id, 20)?;
 
-        loop {
-            if pos >= filtered.len() {
-                break; // end of filtered results → back to fuzzy select
-            }
-            let track = &track_items[filtered[pos]];
-            let saved = is_saved(&cfg.output_path(), &track.artist_name, &track.title);
-            let label = format!("{} / {}", pos + 1, filtered.len());
-            let result = preview::run(client, track.id, debug, Some(label), Some(volume.clone()), saved, direction)?;
-            match result.as_str() {
-                "quit" => break, // back to fuzzy select
-                "prev" => {
-                    pos = pos.saturating_sub(1);
-                    direction = Some("prev");
-                }
-                r if r.starts_with("radio:") => {
-                    if let Ok(id) = r["radio:".len()..].parse::<u64>() {
-                        radio::run(client, id, debug)?;
+        if tracks.is_empty() {
+            println!("No top tracks found for this artist.");
+            continue;
+        }
+
+        let cfg = config::load();
+        let volume = Arc::new(Mutex::new(cfg.volume));
+        let track_rx = static_receiver::<crate::api::TrackInfo>();
+        let mut track_items = tracks;
+        let mut track_labels: Vec<String> = track_items
+            .iter()
+            .map(|t| format!("{} — {}", t.title, t.artist_name))
+            .collect();
+
+        let format_track = |t: &crate::api::TrackInfo| format!("{} — {}", t.title, t.artist_name);
+
+        'select: loop {
+            let (item_idx, filtered) = match fuzzy_select(
+                "Search tracks", "",
+                &mut track_items, &mut track_labels, &track_rx, &format_track,
+            )? {
+                None => break,
+                Some(FuzzyAction::Queue(idx)) => {
+                    if let Some(queue) = crate::DOWNLOAD_QUEUE.get() {
+                        queue.push_tracks(vec![track_items[idx].clone()], client.session.clone(), cfg.output_path());
                     }
-                    break 'select;
+                    continue 'select;
                 }
-                _ => {
-                    pos += 1; // natural end or "next" → advance
-                    direction = Some("next");
+                Some(FuzzyAction::Select(idx, filtered)) => (idx, filtered),
+            };
+
+            let mut pos = filtered.iter().position(|&i| i == item_idx).unwrap_or(0);
+            let mut direction: Option<&str> = None;
+
+            loop {
+                if pos >= filtered.len() {
+                    break; // end of filtered results → back to fuzzy select
+                }
+                let track = &track_items[filtered[pos]];
+                let saved = is_saved(&cfg.output_path(), &track.artist_name, &track.title);
+                let label = format!("{} / {}", pos + 1, filtered.len());
+                let result = preview::run(client, track.id, debug, Some(label), Some(volume.clone()), saved, direction)?;
+                match result.as_str() {
+                    "quit" => break, // back to fuzzy select
+                    "prev" => {
+                        pos = pos.saturating_sub(1);
+                        direction = Some("prev");
+                    }
+                    r if r.starts_with("radio:") => {
+                        if let Ok(id) = r["radio:".len()..].parse::<u64>() {
+                            radio::run(client, id, debug)?;
+                        }
+                        break 'select;
+                    }
+                    _ => {
+                        pos += 1; // natural end or "next" → advance
+                        direction = Some("next");
+                    }
                 }
             }
         }
+
+        break; // exit after playing (existing behaviour)
     }
 
     Ok(())
