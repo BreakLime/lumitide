@@ -108,7 +108,7 @@ fn download_track(entry: &QueueEntry, http: &reqwest::blocking::Client) {
         entry.track.artist_name, entry.track.title
     ));
     let dest = out_dir.join(&filename);
-    let tmp_path = dest.with_extension("flac.tmp");
+    let tmp_path = dest.with_extension("tmp");
 
     let resp = match http.get(&url).send() {
         Ok(r) => r,
@@ -155,7 +155,7 @@ fn download_track(entry: &QueueEntry, http: &reqwest::blocking::Client) {
     }
 
     let cover = entry.track.album_cover.as_deref()
-        .and_then(|id| TidalClient::new(entry.session.clone()).fetch_cover(id, 1280).ok());
+        .and_then(|id| client.fetch_cover(id, 1280).ok());
     let _ = crate::metadata::embed(&dest, &entry.track, cover.as_deref());
 }
 
