@@ -39,6 +39,31 @@ pub fn run(client: &mut TidalClient, debug: bool) -> Result<()> {
         return Ok(());
     }
 
+    let mix_action = {
+        use std::io::Write;
+        print!("\x1B[2J\x1B[H");
+        let _ = std::io::stdout().flush();
+        let actions = ["Play", "Queue for download"];
+        dialoguer::Select::new()
+            .with_prompt(&mix.title)
+            .items(&actions)
+            .default(0)
+            .report(false)
+            .interact_opt()?
+    };
+
+    match mix_action {
+        None => return Ok(()),
+        Some(1) => {
+            if let Some(queue) = crate::DOWNLOAD_QUEUE.get() {
+                let cfg = config::load();
+                queue.push_tracks(tracks, client.session.clone(), cfg.output_path());
+            }
+            return Ok(());
+        }
+        Some(_) => {}
+    }
+
     let cfg = config::load();
     let volume = Arc::new(Mutex::new(cfg.volume));
     let mut idx: usize = 0;
