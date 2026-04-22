@@ -28,6 +28,11 @@ use crate::preview;
 use crate::radio;
 use crate::utils::is_saved;
 
+enum FuzzyAction {
+    Select(usize, Vec<usize>),
+    Queue(usize),
+}
+
 type AppTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 
 fn setup_terminal() -> Result<AppTerminal> {
@@ -57,7 +62,7 @@ fn fuzzy_select<T>(
     labels: &mut Vec<String>,
     rx: &mpsc::Receiver<Result<Vec<T>>>,
     format_item: &dyn Fn(&T) -> String,
-) -> Result<Option<(usize, Vec<usize>)>> {
+) -> Result<Option<FuzzyAction>> {
     let mut terminal = setup_terminal()?;
     let result = fuzzy_select_inner(prompt, empty_msg, items, labels, rx, format_item, &mut terminal);
     teardown_terminal(&mut terminal);
@@ -72,7 +77,7 @@ fn fuzzy_select_inner<T>(
     rx: &mpsc::Receiver<Result<Vec<T>>>,
     format_item: &dyn Fn(&T) -> String,
     terminal: &mut AppTerminal,
-) -> Result<Option<(usize, Vec<usize>)>> {
+) -> Result<Option<FuzzyAction>> {
     let matcher = SkimMatcherV2::default();
     let mut query = String::new();
     let mut cursor: usize = 0;
@@ -239,6 +244,21 @@ fn fuzzy_select_inner<T>(
                     loading_area,
                 );
             }
+
+            if let Some(qs) = crate::DOWNLOAD_QUEUE.get().and_then(|q| q.status()) {
+                let qs_text = format!(" {} ", qs);
+                let w = qs_text.chars().count() as u16;
+                let qs_area = ratatui::layout::Rect::new(
+                    area.width.saturating_sub(w),
+                    area.height.saturating_sub(2),
+                    w.min(area.width),
+                    1,
+                );
+                f.render_widget(
+                    Paragraph::new(qs_text).style(Style::default().add_modifier(Modifier::DIM)),
+                    qs_area,
+                );
+            }
         })?;
 
         // Handle input (50ms poll keeps UI responsive to incoming items)
@@ -251,7 +271,12 @@ fn fuzzy_select_inner<T>(
                     KeyCode::Esc => return Ok(None),
                     KeyCode::Enter => {
                         if !filtered.is_empty() {
-                            return Ok(Some((filtered[cursor], filtered.clone())));
+                            return Ok(Some(FuzzyAction::Select(filtered[cursor], filtered.clone())));
+                        }
+                    }
+                    KeyCode::Char('d') | KeyCode::Char('D') => {
+                        if !filtered.is_empty() {
+                            return Ok(Some(FuzzyAction::Queue(filtered[cursor])));
                         }
                     }
                     KeyCode::Up => {
@@ -394,12 +419,19 @@ fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
     let format_track = |t: &crate::api::TrackInfo| format!("{} — {}", t.title, t.artist_name);
 
     'select: loop {
-        let Some((item_idx, filtered)) = fuzzy_select(
+        let (item_idx, filtered) = match fuzzy_select(
             "Search tracks",
             "You don't have any liked tracks yet.\n\nLike some tracks in the Tidal app and they will appear here.\n\nPress any key to go back.",
             &mut items, &mut labels, &rx, &format_track,
-        )? else {
-            break;
+        )? {
+            None => break,
+            Some(FuzzyAction::Queue(idx)) => {
+                if let Some(queue) = crate::DOWNLOAD_QUEUE.get() {
+                    queue.push_tracks(vec![items[idx].clone()], client.session.clone(), cfg.output_path());
+                }
+                continue 'select;
+            }
+            Some(FuzzyAction::Select(idx, filtered)) => (idx, filtered),
         };
 
         let mut pos = filtered.iter().position(|&i| i == item_idx).unwrap_or(0);
@@ -444,12 +476,21 @@ fn saved_albums(client: &mut TidalClient, debug: bool) -> Result<()> {
     let format_album = |a: &crate::api::AlbumInfo| format!("{} — {}", a.title, a.artist_name);
 
     loop {
-        let Some((album_idx, _)) = fuzzy_select(
+        let album_idx = match fuzzy_select(
             "Search albums",
             "You don't have any saved albums yet.\n\nSave some albums in the Tidal app and they will appear here.\n\nPress any key to go back.",
             &mut items, &mut labels, &rx, &format_album,
-        )? else {
-            return Ok(()); // Esc → back to library menu
+        )? {
+            None => return Ok(()),
+            Some(FuzzyAction::Queue(idx)) => {
+                let tracks = client.album_tracks(items[idx].id)?;
+                if let Some(queue) = crate::DOWNLOAD_QUEUE.get() {
+                    let cfg = config::load();
+                    queue.push_tracks(tracks, client.session.clone(), cfg.output_path());
+                }
+                continue;
+            }
+            Some(FuzzyAction::Select(idx, _)) => idx,
         };
 
         let album = &items[album_idx];
@@ -509,12 +550,13 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
 
     let format_artist = |a: &crate::api::ArtistInfo| a.name.clone();
 
-    let Some((artist_idx, _)) = fuzzy_select(
+    let artist_idx = match fuzzy_select(
         "Search artists",
         "You don't follow any artists yet.\n\nFollow some artists in the Tidal app and they will appear here.\n\nPress any key to go back.",
         &mut items, &mut labels, &rx, &format_artist,
-    )? else {
-        return Ok(());
+    )? {
+        None | Some(FuzzyAction::Queue(_)) => return Ok(()),
+        Some(FuzzyAction::Select(idx, _)) => idx,
     };
 
     let artist = &items[artist_idx];
@@ -537,11 +579,18 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
     let format_track = |t: &crate::api::TrackInfo| format!("{} — {}", t.title, t.artist_name);
 
     'select: loop {
-        let Some((item_idx, filtered)) = fuzzy_select(
+        let (item_idx, filtered) = match fuzzy_select(
             "Search tracks", "",
             &mut track_items, &mut track_labels, &track_rx, &format_track,
-        )? else {
-            break;
+        )? {
+            None => break,
+            Some(FuzzyAction::Queue(idx)) => {
+                if let Some(queue) = crate::DOWNLOAD_QUEUE.get() {
+                    queue.push_tracks(vec![track_items[idx].clone()], client.session.clone(), cfg.output_path());
+                }
+                continue 'select;
+            }
+            Some(FuzzyAction::Select(idx, filtered)) => (idx, filtered),
         };
 
         let mut pos = filtered.iter().position(|&i| i == item_idx).unwrap_or(0);
