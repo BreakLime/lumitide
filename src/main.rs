@@ -17,6 +17,10 @@ mod search;
 mod spectrum;
 mod utils;
 
+use std::sync::OnceLock;
+
+pub static DOWNLOAD_QUEUE: OnceLock<crate::download_queue::DownloadQueue> = OnceLock::new();
+
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 
@@ -63,6 +67,7 @@ enum Commands {
 }
 
 fn main() -> Result<()> {
+    let _ = DOWNLOAD_QUEUE.set(crate::download_queue::DownloadQueue::new());
     let cli = Cli::parse();
 
     match cli.command {
