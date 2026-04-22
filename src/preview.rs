@@ -958,6 +958,7 @@ fn play(
             is_local,
             show_controls,
             show_controls_hint: cfg.show_controls_hint,
+            queue_status: None,
         };
 
         terminal.draw(|f| panel::render(f, &panel_state))?;

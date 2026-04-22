@@ -27,6 +27,7 @@ pub struct PanelState<'a> {
     pub is_local: bool,
     pub show_controls: bool,
     pub show_controls_hint: bool,
+    pub queue_status: Option<String>,
 }
 
 pub fn render(frame: &mut Frame, state: &PanelState) {
@@ -56,6 +57,20 @@ pub fn render(frame: &mut Frame, state: &PanelState) {
             1,
         );
         frame.render_widget(Paragraph::new(Line::styled(hint_text, dim)), hint_area);
+    }
+
+    // Queue download status pinned to bottom-right
+    if let Some(ref qs) = state.queue_status {
+        let qs_text = format!(" {} ", qs);
+        let qs_w = qs_text.chars().count() as u16;
+        let row_offset = if state.show_controls_hint { 2 } else { 1 };
+        let qs_area = Rect::new(
+            terminal.x + terminal.width.saturating_sub(qs_w),
+            terminal.y + terminal.height.saturating_sub(row_offset),
+            qs_w.min(terminal.width),
+            1,
+        );
+        frame.render_widget(Paragraph::new(Line::styled(qs_text, dim)), qs_area);
     }
 
     // ── Border + controls (only when show_controls) ───────────────────────────
