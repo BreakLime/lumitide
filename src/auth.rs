@@ -33,7 +33,7 @@ pub struct Session {
 fn default_token_type() -> String { "Bearer".to_string() }
 
 impl Session {
-    fn is_expired(&self) -> bool {
+    pub fn is_expired(&self) -> bool {
         if let Ok(t) = DateTime::parse_from_rfc3339(&self.expiry_time) {
             let expiry: DateTime<Utc> = t.into();
             // Treat as expired 60 seconds early to avoid racing the deadline
@@ -71,7 +71,7 @@ pub fn get_session() -> Result<Session> {
     Ok(session)
 }
 
-fn save_session(session: &Session) -> Result<()> {
+pub fn save_session(session: &Session) -> Result<()> {
     let path = session_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -80,7 +80,7 @@ fn save_session(session: &Session) -> Result<()> {
     Ok(())
 }
 
-fn refresh_token(refresh_token: &str) -> Result<Session> {
+pub fn refresh_token(refresh_token: &str) -> Result<Session> {
     let client = reqwest::blocking::Client::new();
     let resp = client
         .post(format!("{}/token", AUTH_BASE))

@@ -460,6 +460,30 @@ fn saved_albums(client: &mut TidalClient, debug: bool) -> Result<()> {
             continue; // back to album list
         }
 
+        use std::io::Write;
+        print!("\x1B[2J\x1B[H");
+        let _ = std::io::stdout().flush();
+
+        let album_options = ["Play album", "Download entire album", "Back"];
+        let Some(album_choice) = dialoguer::Select::new()
+            .with_prompt(&format!("{} — {}", album.title, album.artist_name))
+            .items(&album_options)
+            .default(0)
+            .report(false)
+            .interact_opt()?
+        else {
+            continue;
+        };
+
+        if album_choice == 1 {
+            download_album(client, album, &tracks)?;
+            continue;
+        }
+
+        if album_choice == 2 {
+            continue;
+        }
+
         let cfg = config::load();
         let volume = Arc::new(Mutex::new(cfg.volume));
         let mut idx: usize = 0;
@@ -574,6 +598,109 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
             }
         }
     }
+
+    Ok(())
+}
+
+fn download_album(client: &mut TidalClient, album: &crate::api::AlbumInfo, tracks: &[crate::api::TrackInfo]) -> Result<()> {
+    let cfg = crate::config::load();
+    let out_dir = std::path::Path::new(&cfg.output_dir);
+    std::fs::create_dir_all(out_dir)?;
+
+    let cover_bytes = album.cover.as_ref().and_then(|id| {
+        client.fetch_cover(id, 1280).ok()
+    });
+
+    println!("\nDownloading album: {} by {}", album.title, album.artist_name);
+
+    for (i, track) in tracks.iter().enumerate() {
+        let filename = crate::utils::safe_filename(&format!("{:02}. {} - {}.flac", track.track_num, track.artist_name, track.title));
+        let dest = out_dir.join(&filename);
+
+        if crate::utils::is_saved(&cfg.output_path(), &track.artist_name, &track.title) {
+            println!("[{}/{}] Skipping (already exists): {}", i + 1, tracks.len(), filename);
+            continue;
+        }
+
+        print!("[{}/{}] Downloading: {} ... ", i + 1, tracks.len(), filename);
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+
+        if client.session.is_expired() {
+            if let Ok(new_session) = crate::auth::refresh_token(&client.session.refresh_token) {
+                client.session = new_session;
+                let _ = crate::auth::save_session(&client.session);
+            }
+        }
+
+        let mut stream_url_res = client.stream_url(track.id);
+        if let Err(e) = &stream_url_res {
+            if e.to_string().contains("401") || e.to_string().contains("403") {
+                if let Ok(new_session) = crate::auth::refresh_token(&client.session.refresh_token) {
+                    client.session = new_session;
+                    let _ = crate::auth::save_session(&client.session);
+                    stream_url_res = client.stream_url(track.id);
+                }
+            }
+        }
+
+        match stream_url_res {
+            Ok(url) => {
+                let mut resp = reqwest::blocking::Client::new().get(&url).send();
+                if let Ok(ref r) = resp {
+                    if r.status().as_u16() == 401 || r.status().as_u16() == 403 {
+                        if let Ok(new_session) = crate::auth::refresh_token(&client.session.refresh_token) {
+                            client.session = new_session;
+                            let _ = crate::auth::save_session(&client.session);
+                            if let Ok(new_url) = client.stream_url(track.id) {
+                                resp = reqwest::blocking::Client::new().get(&new_url).send();
+                            }
+                        }
+                    }
+                }
+
+                match resp {
+                    Ok(mut r) => {
+                        if r.status().is_success() {
+                            if let Ok(mut f) = std::fs::File::create(&dest) {
+                                let total_size = r.content_length().unwrap_or(0);
+                                let mut downloaded = 0;
+                                let mut buf = [0; 8192];
+                                use std::io::Read;
+                                loop {
+                                    match r.read(&mut buf) {
+                                        Ok(0) => break,
+                                        Ok(n) => {
+                                            if f.write_all(&buf[..n]).is_err() {
+                                                break;
+                                            }
+                                            downloaded += n as u64;
+                                            let pct = (downloaded as f64 / total_size as f64) * 100.0;
+                                            print!("\r[{}/{}] Downloading: {} ... {:.1}%", i + 1, tracks.len(), filename, pct);
+                                            let _ = std::io::stdout().flush();
+                                        }
+                                        Err(_) => break,
+                                    }
+                                }
+                                let _ = crate::metadata::embed(&dest, track, cover_bytes.as_deref());
+                                println!("\r[{}/{}] Downloading: {} ... Done!        ", i + 1, tracks.len(), filename);
+                            } else {
+                                println!("\nFailed to create file");
+                            }
+                        } else {
+                            println!("\nHTTP error {}", r.status());
+                        }
+                    }
+                    Err(e) => println!("\nFailed to download: {}", e),
+                }
+            }
+            Err(e) => println!("\nAPI streaming error: {}", e),
+        }
+    }
+    
+    println!("\nAlbum download complete. Press Enter to continue.");
+    let mut s = String::new();
+    let _ = std::io::stdin().read_line(&mut s);
 
     Ok(())
 }
