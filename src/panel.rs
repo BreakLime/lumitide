@@ -47,7 +47,8 @@ pub fn render(frame: &mut Frame, state: &PanelState) {
     let dim = Style::new().fg(Color::DarkGray);
 
     // ── "? controls" hint pinned to terminal bottom-right ────────────────────
-    if state.show_controls_hint {
+    // Hidden while a download is active so the two don't overlap
+    if state.show_controls_hint && state.queue_status.is_none() {
         let hint_text = " Press ? for ctrl ";
         let hint_w = hint_text.len() as u16;
         let hint_area = Rect::new(
@@ -59,14 +60,13 @@ pub fn render(frame: &mut Frame, state: &PanelState) {
         frame.render_widget(Paragraph::new(Line::styled(hint_text, dim)), hint_area);
     }
 
-    // Queue download status pinned to bottom-right
+    // Queue download status pinned to bottom-right (replaces the controls hint row)
     if let Some(ref qs) = state.queue_status {
         let qs_text = format!(" {} ", qs);
         let qs_w = qs_text.chars().count() as u16;
-        let row_offset = if state.show_controls_hint { 2 } else { 1 };
         let qs_area = Rect::new(
             terminal.x + terminal.width.saturating_sub(qs_w),
-            terminal.y + terminal.height.saturating_sub(row_offset),
+            terminal.y + terminal.height.saturating_sub(1),
             qs_w.min(terminal.width),
             1,
         );

@@ -1,6 +1,5 @@
 mod api;
 mod auth;
-mod banner;
 mod color_state;
 mod config;
 mod cover;
@@ -114,7 +113,24 @@ fn main() -> Result<()> {
 }
 
 fn interactive_menu() -> Result<()> {
-    use dialoguer::{Input, Select};
+    use crossterm::{
+        event::{self, Event, KeyCode, KeyEventKind},
+        execute,
+        terminal::{
+            disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
+            LeaveAlternateScreen,
+        },
+    };
+    use ratatui::{
+        backend::CrosstermBackend,
+        layout::Rect,
+        style::{Color, Modifier, Style},
+        text::{Line, Span},
+        widgets::{List, ListItem, Paragraph},
+        Terminal,
+    };
+    use std::io;
+    use std::time::Duration;
 
     // First-run: prompt for download folder if still at the default
     {
@@ -126,7 +142,7 @@ fn interactive_menu() -> Result<()> {
             println!("Welcome to lumitide!\n");
             println!("Select a folder where your downloaded music will be saved.\n");
             let options = ["Select folder", "Do it later via Config"];
-            if let Some(0) = Select::new()
+            if let Some(0) = dialoguer::Select::new()
                 .items(&options)
                 .default(0)
                 .report(false)
@@ -140,8 +156,7 @@ fn interactive_menu() -> Result<()> {
                 }
                 #[cfg(not(windows))]
                 {
-                    use dialoguer::Input;
-                    let input: String = Input::new()
+                    let input: String = dialoguer::Input::new()
                         .with_prompt("Download folder")
                         .allow_empty(true)
                         .interact_text()?;
@@ -155,36 +170,119 @@ fn interactive_menu() -> Result<()> {
         }
     }
 
-    let options = [
-        "Search",
-        "My mixes",
-        "My playlists",
-        "My library",
-        "Local files",
-        "Config",
-        "Quit",
-    ];
+    const BANNER_LINES: &[&str] = &["   <> <> <>", "      <>", "", "L U M I T I D E", ""];
+    let accent = {
+        let cfg = config::load();
+        if cfg.pywal {
+            color_state::load_pywal_palette()
+                .and_then(|p| p.get(1).copied())
+                .unwrap_or((0, 200, 200))
+        } else {
+            (0, 200, 200)
+        }
+    };
+    let accent_color = Color::Rgb(accent.0, accent.1, accent.2);
+
+    let options = ["Search", "My mixes", "My playlists", "My library", "Local files", "Config", "Quit"];
+    let mut cursor: usize = 0;
 
     loop {
-        // Clear the terminal so previous output doesn't accumulate above the menu
-        use std::io::Write;
-        print!("\x1B[2J\x1B[H");
-        let _ = std::io::stdout().flush();
-
-        banner::print_banner();
-
-        let Some(choice) = Select::new()
-            .items(&options)
-            .default(0)
-            .report(false)
-            .interact_opt()?
-        else {
-            return Ok(());
+        enable_raw_mode()?;
+        let mut terminal = {
+            let mut stdout = io::stdout();
+            execute!(stdout, Clear(ClearType::All), EnterAlternateScreen)?;
+            Terminal::new(CrosstermBackend::new(stdout))?
         };
 
+        // Drain stale key events left over from sub-screens
+        while event::poll(Duration::ZERO)? {
+            let _ = event::read();
+        }
+
+        let choice = loop {
+            terminal.draw(|f| {
+                let area = f.area();
+                let banner_h = BANNER_LINES.len() as u16;
+
+                // Banner
+                let banner_area = Rect::new(area.x, area.y, area.width, banner_h.min(area.height));
+                f.render_widget(
+                    Paragraph::new(
+                        BANNER_LINES
+                            .iter()
+                            .map(|l| Line::from(Span::styled(format!("  {l}"), Style::default().fg(accent_color))))
+                            .collect::<Vec<_>>(),
+                    ),
+                    banner_area,
+                );
+
+                // Menu
+                if banner_h < area.height {
+                    let menu_area = Rect::new(area.x, area.y + banner_h, area.width, area.height - banner_h);
+                    let items: Vec<ListItem> = options
+                        .iter()
+                        .enumerate()
+                        .map(|(i, label)| {
+                            if i == cursor {
+                                ListItem::new(format!("> {label}"))
+                                    .style(Style::default().add_modifier(Modifier::BOLD))
+                            } else {
+                                ListItem::new(format!("  {label}"))
+                            }
+                        })
+                        .collect();
+                    f.render_widget(List::new(items), menu_area);
+                }
+
+                // Queue overlay
+                if let Some(qs) = crate::DOWNLOAD_QUEUE.get().and_then(|q| q.status()) {
+                    let qs_text = format!(" {} ", qs);
+                    let w = qs_text.chars().count() as u16;
+                    let qs_area = Rect::new(
+                        area.width.saturating_sub(w),
+                        area.height.saturating_sub(1),
+                        w.min(area.width),
+                        1,
+                    );
+                    f.render_widget(
+                        Paragraph::new(qs_text).style(Style::default().add_modifier(Modifier::DIM)),
+                        qs_area,
+                    );
+                }
+            })?;
+
+            if event::poll(Duration::from_millis(100))? {
+                if let Event::Key(key) = event::read()? {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if cursor > 0 {
+                                cursor -= 1;
+                            }
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if cursor + 1 < options.len() {
+                                cursor += 1;
+                            }
+                        }
+                        KeyCode::Enter => break Some(cursor),
+                        KeyCode::Esc | KeyCode::Char('q') => break None,
+                        _ => {}
+                    }
+                }
+            }
+        };
+
+        let _ = disable_raw_mode();
+        let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+        drop(terminal);
+
         match choice {
-            0 => {
-                let query: String = Input::new()
+            None | Some(6) => return Ok(()),
+            Some(0) => {
+                let query: String = dialoguer::Input::new()
                     .with_prompt("Search")
                     .allow_empty(true)
                     .interact_text()?;
@@ -194,22 +292,22 @@ fn interactive_menu() -> Result<()> {
                     search::run(&mut client, &query, 10, false)?;
                 }
             }
-            1 => {
+            Some(1) => {
                 let session = auth::get_session()?;
                 let mut client = api::TidalClient::new(session);
                 mix::run(&mut client, false)?;
             }
-            2 => {
+            Some(2) => {
                 let session = auth::get_session()?;
                 let mut client = api::TidalClient::new(session);
                 playlist::run(&mut client, false)?;
             }
-            3 => {
+            Some(3) => {
                 let session = auth::get_session()?;
                 let mut client = api::TidalClient::new(session);
                 library::run(&mut client, false)?;
             }
-            4 => {
+            Some(4) => {
                 match local::run(false)?.as_str() {
                     "mixes" => {
                         let session = auth::get_session()?;
@@ -217,7 +315,7 @@ fn interactive_menu() -> Result<()> {
                         mix::run(&mut client, false)?;
                     }
                     "search" => {
-                        let query: String = Input::new()
+                        let query: String = dialoguer::Input::new()
                             .with_prompt("Search")
                             .allow_empty(true)
                             .interact_text()?;
@@ -230,10 +328,7 @@ fn interactive_menu() -> Result<()> {
                     _ => {}
                 }
             }
-            5 => {
-                print!("\x1B[2J\x1B[H");
-                use std::io::Write;
-                let _ = std::io::stdout().flush();
+            Some(5) => {
                 let cfg_options = ["Edit in app", "Open JSON file"];
                 if let Some(c) = dialoguer::Select::new()
                     .items(&cfg_options)
@@ -247,7 +342,7 @@ fn interactive_menu() -> Result<()> {
                     }
                 }
             }
-            _ => return Ok(()),
+            _ => {}
         }
     }
 }

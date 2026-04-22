@@ -1,11 +1,29 @@
 use anyhow::Result;
 use dialoguer::Select;
+use std::io;
+use std::time::Duration;
+
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEventKind},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::Rect,
+    style::{Modifier, Style},
+    text::Line,
+    widgets::{List, ListItem, Paragraph},
+    Terminal,
+};
 
 use crate::api::TidalClient;
 use crate::config;
 use crate::preview;
 use crate::radio;
 use crate::utils::is_saved;
+
+enum Action { Play(usize), Queue(usize), Back }
 
 pub fn run(client: &mut TidalClient, query: &str, limit: u32, by_artist: bool) -> Result<()> {
     let cfg = config::load();
@@ -38,31 +56,106 @@ pub fn run(client: &mut TidalClient, query: &str, limit: u32, by_artist: bool) -
         return Ok(());
     }
 
+    let labels: Vec<String> = tracks
+        .iter()
+        .map(|t| format!("{} — {}", t.title, t.artist_name))
+        .collect();
+
+    let show_hint = cfg.show_controls_hint;
     let mut cursor: usize = 0;
+    let mut scroll: usize = 0;
+
     loop {
-        let labels: Vec<String> = tracks.iter()
-            .map(|t| format!("{} — {}", t.title, t.artist_name))
-            .collect();
+        enable_raw_mode()?;
+        let mut terminal = {
+            let mut stdout = io::stdout();
+            execute!(stdout, Clear(ClearType::All), EnterAlternateScreen)?;
+            Terminal::new(CrosstermBackend::new(stdout))?
+        };
+        while event::poll(Duration::ZERO)? {
+            let _ = event::read();
+        }
 
-        let Some(idx) = Select::new()
-            .with_prompt("Select a track to preview")
-            .items(&labels)
-            .default(cursor)
-            .report(false)
-            .interact_opt()?
-        else { break };
+        let action = loop {
+            terminal.draw(|f| {
+                let area = f.area();
+                let visible = area.height as usize;
 
-        cursor = idx;
-        let track = &tracks[idx];
-        let saved = is_saved(&cfg.output_path(), &track.artist_name, &track.title);
-        let result = preview::run(client, track.id, false, None, None, saved, None)?;
-        if result.starts_with("radio:") {
-            if let Ok(id) = result["radio:".len()..].parse::<u64>() {
-                radio::run(client, id, false)?;
+                if cursor < scroll { scroll = cursor; }
+                if visible > 0 && cursor >= scroll + visible { scroll = cursor + 1 - visible; }
+
+                let items: Vec<ListItem> = labels
+                    .iter()
+                    .enumerate()
+                    .skip(scroll)
+                    .take(visible)
+                    .map(|(i, label)| {
+                        if i == cursor {
+                            ListItem::new(Line::from(format!("> {}", label)))
+                                .style(Style::default().add_modifier(Modifier::BOLD))
+                        } else {
+                            ListItem::new(format!("  {}", label))
+                        }
+                    })
+                    .collect();
+                f.render_widget(List::new(items), area);
+
+                if let Some(txt) = crate::DOWNLOAD_QUEUE
+                    .get()
+                    .and_then(|q| q.status())
+                    .or_else(|| show_hint.then(|| " ↵ play  d · download ".to_string()))
+                {
+                    let w = txt.chars().count() as u16;
+                    let qs_area = Rect::new(
+                        area.width.saturating_sub(w),
+                        area.height.saturating_sub(1),
+                        w.min(area.width),
+                        1,
+                    );
+                    f.render_widget(
+                        Paragraph::new(txt).style(Style::default().add_modifier(Modifier::DIM)),
+                        qs_area,
+                    );
+                }
+            })?;
+
+            if event::poll(Duration::from_millis(100))? {
+                if let Event::Key(key) = event::read()? {
+                    if key.kind != KeyEventKind::Press { continue; }
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => { if cursor > 0 { cursor -= 1; } }
+                        KeyCode::Down | KeyCode::Char('j') => { if cursor + 1 < tracks.len() { cursor += 1; } }
+                        KeyCode::Enter => break Action::Play(cursor),
+                        KeyCode::Char('d') | KeyCode::Char('D') => break Action::Queue(cursor),
+                        KeyCode::Esc | KeyCode::Char('q') => break Action::Back,
+                        _ => {}
+                    }
+                }
             }
-            break;
+        };
+
+        let _ = disable_raw_mode();
+        let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+        drop(terminal);
+
+        match action {
+            Action::Back => return Ok(()),
+            Action::Queue(idx) => {
+                if let Some(queue) = crate::DOWNLOAD_QUEUE.get() {
+                    queue.push_tracks(vec![tracks[idx].clone()], client.session.clone(), cfg.output_path());
+                }
+            }
+            Action::Play(idx) => {
+                let track = &tracks[idx];
+                let saved = is_saved(&cfg.output_path(), &track.artist_name, &track.title);
+                let result = preview::run(client, track.id, false, None, None, saved, None)?;
+                if result.starts_with("radio:") {
+                    if let Ok(id) = result["radio:".len()..].parse::<u64>() {
+                        radio::run(client, id, false)?;
+                    }
+                    return Ok(());
+                }
+            }
         }
     }
-
-    Ok(())
 }

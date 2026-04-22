@@ -2,11 +2,13 @@
 
 A terminal music player for Tidal, written in Rust.
 
-Stream lossless audio from your Tidal account directly in the terminal, with album art, a live spectrum visualizer, beat/drop detection, and in-app downloads.
+Stream lossless audio from your Tidal account directly in the terminal, with album art, a live spectrum visualizer, beat/drop detection, and a background download queue.
 
 ![Lumitide demo](assets/demo.gif)
 
-`→/n` next &nbsp;`←/p` prev &nbsp;`Space` pause &nbsp;`↑/+` vol up &nbsp;`↓/-` vol down &nbsp;`d` download &nbsp;`r` radio &nbsp;`?` controls &nbsp;`q/Esc` quit or go back
+**Playback:** `→/n` next &nbsp;`←/p` prev &nbsp;`Space` pause &nbsp;`↑/+` vol up &nbsp;`↓/-` vol down &nbsp;`d` download &nbsp;`r` radio &nbsp;`?` controls &nbsp;`q/Esc` back
+
+**Lists:** `↑↓` / `jk` navigate &nbsp;`Enter` play &nbsp;`d` queue for download &nbsp;`Esc/q` back
 
 ## Features
 
@@ -19,9 +21,10 @@ Stream lossless audio from your Tidal account directly in the terminal, with alb
 - **Mix mode** — browse and play your curated Tidal mixes with animated track transitions
 - **Playlist mode** — browse and play your Tidal playlists
 - **Radio** — press `r` on any track to start a Tidal radio seeded from it
-- **Search** — find tracks by title
+- **Search** — find tracks by title or artist
 - **Local playback** — shuffle local FLAC, MP3, and M4A files with the same UI
-- **Download** — save any streaming track to disk with a single keypress
+- **Download** — press `d` while a track is playing to save it to disk; or press `d` on any album, mix, playlist, or track in a list view to queue it for **background download** without interrupting playback or navigation
+- **Download queue** — a live `⬇ Artist - Title  N / M` indicator appears at the bottom-right of every screen while the queue is running; total grows as you queue more
 - **Media key support** — control playback via media keys; track metadata and album art shown in Windows taskbar/lock screen and macOS Control Center
 
 ## Requirements
@@ -144,6 +147,8 @@ lumitide config                        # open the config file in your editor
 
 ## Key Bindings
 
+### During playback
+
 | Key | Action |
 |-----|--------|
 | `→` / `n` | Next track |
@@ -151,10 +156,19 @@ lumitide config                        # open the config file in your editor
 | `Space` | Pause / resume |
 | `↑` / `+` | Volume up |
 | `↓` / `-` | Volume down |
-| `d` | Download current track |
+| `d` | Download current track to disk |
 | `r` | Start radio from current track |
 | `?` | Toggle controls overlay |
-| `q` / `Esc` | Quit |
+| `q` / `Esc` | Go back |
+
+### In list views (library, search, mixes, playlists)
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` or `k` / `j` | Navigate |
+| `Enter` | Play selected item |
+| `d` | Queue selected item for background download |
+| `Esc` / `q` | Go back |
 
 ## Configuration
 

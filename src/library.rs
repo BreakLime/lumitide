@@ -10,7 +10,6 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use dialoguer::Select;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use ratatui::{
@@ -62,9 +61,11 @@ fn fuzzy_select<T>(
     labels: &mut Vec<String>,
     rx: &mpsc::Receiver<Result<Vec<T>>>,
     format_item: &dyn Fn(&T) -> String,
+    show_download_hint: bool,
 ) -> Result<Option<FuzzyAction>> {
+    let hint = show_download_hint && config::load().show_controls_hint;
     let mut terminal = setup_terminal()?;
-    let result = fuzzy_select_inner(prompt, empty_msg, items, labels, rx, format_item, &mut terminal);
+    let result = fuzzy_select_inner(prompt, empty_msg, items, labels, rx, format_item, &mut terminal, hint);
     teardown_terminal(&mut terminal);
     result
 }
@@ -77,6 +78,7 @@ fn fuzzy_select_inner<T>(
     rx: &mpsc::Receiver<Result<Vec<T>>>,
     format_item: &dyn Fn(&T) -> String,
     terminal: &mut AppTerminal,
+    show_download_hint: bool,
 ) -> Result<Option<FuzzyAction>> {
     let matcher = SkimMatcherV2::default();
     let mut query = String::new();
@@ -245,9 +247,15 @@ fn fuzzy_select_inner<T>(
                 );
             }
 
-            if let Some(qs) = crate::DOWNLOAD_QUEUE.get().and_then(|q| q.status()) {
-                let qs_text = format!(" {} ", qs);
-                let w = qs_text.chars().count() as u16;
+            let corner_text = if let Some(qs) = crate::DOWNLOAD_QUEUE.get().and_then(|q| q.status()) {
+                Some(qs)
+            } else if show_download_hint && !filtered.is_empty() {
+                Some(" ↵ play  d · download ".to_string())
+            } else {
+                None
+            };
+            if let Some(txt) = corner_text {
+                let w = txt.chars().count() as u16;
                 let qs_area = ratatui::layout::Rect::new(
                     area.width.saturating_sub(w),
                     area.height.saturating_sub(2),
@@ -255,7 +263,7 @@ fn fuzzy_select_inner<T>(
                     1,
                 );
                 f.render_widget(
-                    Paragraph::new(qs_text).style(Style::default().add_modifier(Modifier::DIM)),
+                    Paragraph::new(txt).style(Style::default().add_modifier(Modifier::DIM)),
                     qs_area,
                 );
             }
@@ -377,31 +385,80 @@ fn static_receiver<T>() -> mpsc::Receiver<Result<Vec<T>>> {
 // ── Public entry point ──────────────────────────────────────────────────────
 
 pub fn run(client: &mut TidalClient, debug: bool) -> Result<()> {
-    let options = [
-        "Liked tracks",
-        "Saved albums",
-        "Followed artists",
-        "Back",
-    ];
+    let options = ["Liked tracks", "Saved albums", "Followed artists", "Back"];
+    let mut cursor: usize = 0;
 
     loop {
-        use std::io::Write;
-        print!("\x1B[2J\x1B[H");
-        let _ = std::io::stdout().flush();
+        let mut terminal = setup_terminal()?;
 
-        let Some(choice) = Select::new()
-            .items(&options)
-            .default(0)
-            .report(false)
-            .interact_opt()?
-        else {
-            return Ok(());
+        // Drain stale key events left over from sub-screens
+        while event::poll(Duration::ZERO)? {
+            let _ = event::read();
+        }
+
+        let choice = loop {
+            terminal.draw(|f| {
+                let area = f.area();
+                let items: Vec<ListItem> = options
+                    .iter()
+                    .enumerate()
+                    .map(|(i, label)| {
+                        if i == cursor {
+                            ListItem::new(format!("> {}", label))
+                                .style(Style::default().add_modifier(Modifier::BOLD))
+                        } else {
+                            ListItem::new(format!("  {}", label))
+                        }
+                    })
+                    .collect();
+                f.render_widget(List::new(items), area);
+
+                if let Some(qs) = crate::DOWNLOAD_QUEUE.get().and_then(|q| q.status()) {
+                    let qs_text = format!(" {} ", qs);
+                    let w = qs_text.chars().count() as u16;
+                    let qs_area = ratatui::layout::Rect::new(
+                        area.width.saturating_sub(w),
+                        area.height.saturating_sub(1),
+                        w.min(area.width),
+                        1,
+                    );
+                    f.render_widget(
+                        Paragraph::new(qs_text).style(Style::default().add_modifier(Modifier::DIM)),
+                        qs_area,
+                    );
+                }
+            })?;
+
+            if event::poll(Duration::from_millis(100))? {
+                if let Event::Key(key) = event::read()? {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if cursor > 0 {
+                                cursor -= 1;
+                            }
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if cursor + 1 < options.len() {
+                                cursor += 1;
+                            }
+                        }
+                        KeyCode::Enter => break Some(cursor),
+                        KeyCode::Esc | KeyCode::Char('q') => break None,
+                        _ => {}
+                    }
+                }
+            }
         };
 
+        teardown_terminal(&mut terminal);
+
         match choice {
-            0 => liked_tracks(client, debug)?,
-            1 => saved_albums(client, debug)?,
-            2 => followed_artists(client, debug)?,
+            Some(0) => liked_tracks(client, debug)?,
+            Some(1) => saved_albums(client, debug)?,
+            Some(2) => followed_artists(client, debug)?,
             _ => return Ok(()),
         }
     }
@@ -422,7 +479,7 @@ fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
         let (item_idx, filtered) = match fuzzy_select(
             "Search tracks",
             "You don't have any liked tracks yet.\n\nLike some tracks in the Tidal app and they will appear here.\n\nPress any key to go back.",
-            &mut items, &mut labels, &rx, &format_track,
+            &mut items, &mut labels, &rx, &format_track, true,
         )? {
             None => break,
             Some(FuzzyAction::Queue(idx)) => {
@@ -479,7 +536,7 @@ fn saved_albums(client: &mut TidalClient, debug: bool) -> Result<()> {
         let album_idx = match fuzzy_select(
             "Search albums",
             "You don't have any saved albums yet.\n\nSave some albums in the Tidal app and they will appear here.\n\nPress any key to go back.",
-            &mut items, &mut labels, &rx, &format_album,
+            &mut items, &mut labels, &rx, &format_album, true,
         )? {
             None => return Ok(()),
             Some(FuzzyAction::Queue(idx)) => {
@@ -554,7 +611,7 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
         let artist_idx = match fuzzy_select(
             "Search artists",
             "You don't follow any artists yet.\n\nFollow some artists in the Tidal app and they will appear here.\n\nPress any key to go back.",
-            &mut items, &mut labels, &rx, &format_artist,
+            &mut items, &mut labels, &rx, &format_artist, false,
         )? {
             None => return Ok(()),
             Some(FuzzyAction::Queue(_)) => continue,
@@ -583,7 +640,7 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
         'select: loop {
             let (item_idx, filtered) = match fuzzy_select(
                 "Search tracks", "",
-                &mut track_items, &mut track_labels, &track_rx, &format_track,
+                &mut track_items, &mut track_labels, &track_rx, &format_track, true,
             )? {
                 None => break,
                 Some(FuzzyAction::Queue(idx)) => {
