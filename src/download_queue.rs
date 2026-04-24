@@ -98,15 +98,15 @@ fn download_track(entry: &QueueEntry, http: &reqwest::blocking::Client) {
     }
 
     let client = TidalClient::new(entry.session.clone());
-    let url = match client.stream_url(entry.track.id) {
-        Ok(u) => u,
+    let stream_info = match client.stream_url(entry.track.id) {
+        Ok(s) => s,
         Err(_) => {
             // Token may have expired — try to refresh once
             if let Ok(new_session) = crate::auth::refresh_token(&entry.session.refresh_token) {
                 let _ = crate::auth::save_session(&new_session);
                 let refreshed = TidalClient::new(new_session);
                 match refreshed.stream_url(entry.track.id) {
-                    Ok(u) => u,
+                    Ok(s) => s,
                     Err(_) => return,
                 }
             } else {
@@ -119,7 +119,7 @@ fn download_track(entry: &QueueEntry, http: &reqwest::blocking::Client) {
     let tmp_name = safe_filename(&format!("{} - {}.tmp", entry.track.artist_name, entry.track.title));
     let tmp_path = out_dir.join(&tmp_name);
 
-    let resp = match http.get(&url).send() {
+    let resp = match http.get(&stream_info.url).send() {
         Ok(r) => r,
         Err(_) => return,
     };
@@ -135,13 +135,25 @@ fn download_track(entry: &QueueEntry, http: &reqwest::blocking::Client) {
         }
     };
 
+    use ctr::cipher::{KeyIvInit, StreamCipher};
+    type Aes128Ctr = ctr::Ctr64BE<aes::Aes128>;
+    let mut maybe_cipher = stream_info.encryption.map(|enc| {
+        let mut iv = [0u8; 16];
+        iv[..8].copy_from_slice(&enc.nonce);
+        Aes128Ctr::new_from_slices(&enc.key, &iv).expect("valid key/iv")
+    });
+
     let mut buf = vec![0u8; 65_536];
     let mut ok = true;
     loop {
         match reader.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
-                if f.write_all(&buf[..n]).is_err() {
+                let chunk = &mut buf[..n];
+                if let Some(ref mut cipher) = maybe_cipher {
+                    cipher.apply_keystream(chunk);
+                }
+                if f.write_all(chunk).is_err() {
                     ok = false;
                     break;
                 }

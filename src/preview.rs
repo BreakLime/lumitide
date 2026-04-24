@@ -466,8 +466,8 @@ pub fn run(
         Ok(t) => t,
         Err(e) => { teardown_terminal(&mut terminal); return Err(e); }
     };
-    let url = match client.stream_url(track_id) {
-        Ok(u) => u,
+    let stream_info = match client.stream_url(track_id) {
+        Ok(s) => s,
         Err(e) => { teardown_terminal(&mut terminal); return Err(e); }
     };
 
@@ -486,7 +486,8 @@ pub fn run(
     let download_done = Arc::new(AtomicBool::new(false));
     let header_ready = Arc::new(AtomicBool::new(false));
 
-    let url_clone = url.clone();
+    let url_clone = stream_info.url.clone();
+    let enc_clone = stream_info.encryption;
     let path_clone = tmp_path.clone();
     let dd_clone = download_done.clone();
     let hr_clone = header_ready.clone();
@@ -497,7 +498,7 @@ pub fn run(
     let dl_total_dl = dl_total_shared.clone();
 
     thread::spawn(move || {
-        download_to_file(&url_clone, &path_clone, &dd_clone, &hr_clone, &dl_bytes_dl, &dl_total_dl);
+        download_to_file(&url_clone, &path_clone, &dd_clone, &hr_clone, &dl_bytes_dl, &dl_total_dl, enc_clone);
     });
 
     // Wait until header bytes are ready
@@ -580,7 +581,17 @@ fn download_to_file(
     header_ready: &AtomicBool,
     dl_bytes: &AtomicU64,
     dl_total: &AtomicU64,
+    encryption: Option<crate::api::EncryptionInfo>,
 ) {
+    use ctr::cipher::{KeyIvInit, StreamCipher};
+    type Aes128Ctr = ctr::Ctr64BE<aes::Aes128>;
+
+    let mut maybe_cipher = encryption.map(|enc| {
+        let mut iv = [0u8; 16];
+        iv[..8].copy_from_slice(&enc.nonce);
+        Aes128Ctr::new_from_slices(&enc.key, &iv).expect("valid key/iv")
+    });
+
     let client = reqwest::blocking::Client::new();
     let resp = match client.get(url).send() {
         Ok(r) => r,
@@ -602,7 +613,11 @@ fn download_to_file(
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    let _ = file.write_all(&buf[..n]);
+                    let chunk = &mut buf[..n];
+                    if let Some(ref mut cipher) = maybe_cipher {
+                        cipher.apply_keystream(chunk);
+                    }
+                    let _ = file.write_all(chunk);
                     written += n as u64;
                     dl_bytes.store(written, Ordering::Relaxed);
                     if !header_ready.load(Ordering::Relaxed) && written >= BUFFER_THRESHOLD {

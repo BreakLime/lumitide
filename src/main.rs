@@ -66,6 +66,17 @@ enum Commands {
 }
 
 fn main() -> Result<()> {
+    // When the OS invokes us as the tidal:// URI handler, write the URL to the
+    // temp file that the waiting pkce_login() is polling, then exit immediately.
+    #[cfg(target_os = "windows")]
+    {
+        let args: Vec<String> = std::env::args().collect();
+        if args.len() >= 3 && args[1] == "--auth-callback" {
+            let _ = std::fs::write(auth::auth_callback_file(), args[2].trim());
+            return Ok(());
+        }
+    }
+
     let _ = DOWNLOAD_QUEUE.set(crate::download_queue::DownloadQueue::new());
     let cli = Cli::parse();
 
