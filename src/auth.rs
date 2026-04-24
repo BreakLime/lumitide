@@ -1,15 +1,26 @@
 use anyhow::{anyhow, Result};
-use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
-// Desktop app client — issues INTERNAL tokens with LOSSLESS access.
+// ── Platform-specific client credentials ─────────────────────────────────────
+//
+// Windows: Tidal desktop app client — PKCE flow, no secret, issues INTERNAL
+//          tokens that unlock LOSSLESS FLAC streams.
+// Other:   Legacy third-party client — device code flow, issues BROWSER tokens
+//          that give HIGH quality (MP4/AAC). Good UX, works on all platforms.
+
+#[cfg(target_os = "windows")]
 pub const CLIENT_ID: &str = "mhPVJJEBNRzVjr2p";
+
+#[cfg(not(target_os = "windows"))]
+pub const CLIENT_ID: &str = "fX2JxdmntZWK0ixT";
+#[cfg(not(target_os = "windows"))]
+const CLIENT_SECRET: &str = "1Nn9AfDAjxrgJFJbKNWLeAyKGVGmINuXPPLHVXAvxAg=";
+
 const AUTH_BASE: &str = "https://auth.tidal.com/v1/oauth2";
-const LOGIN_BASE: &str = "https://login.tidal.com";
-// Match the desktop app User-Agent so auth and playback endpoints accept our requests.
+
+// Desktop UA — required for the Windows PKCE flow and keeps API requests consistent.
 pub const TIDAL_UA: &str = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 \
     (KHTML, like Gecko) TIDAL/2.41.3 Chrome/142.0.7444.265 Electron/39.8.0 Safari/537.36";
 
@@ -48,7 +59,7 @@ impl Session {
     }
 }
 
-/// Load session from disk, refresh if expired, or run PKCE login for a new session.
+/// Load session from disk, refresh if expired, or run the platform login flow.
 pub fn get_session() -> Result<Session> {
     let path = session_path();
     if path.exists() {
@@ -66,7 +77,11 @@ pub fn get_session() -> Result<Session> {
         }
     }
 
+    #[cfg(target_os = "windows")]
     let session = pkce_login()?;
+    #[cfg(not(target_os = "windows"))]
+    let session = device_auth_flow()?;
+
     let _ = save_session(&session);
     Ok(session)
 }
@@ -84,14 +99,27 @@ pub fn refresh_token(refresh_token: &str) -> Result<Session> {
     let client = reqwest::blocking::Client::builder()
         .user_agent(TIDAL_UA)
         .build()?;
+
+    #[cfg(target_os = "windows")]
+    let form: &[(&str, &str)] = &[
+        ("client_id",      CLIENT_ID),
+        ("grant_type",     "refresh_token"),
+        ("refresh_token",  refresh_token),
+        ("scope",          "r_usr w_usr"),
+    ];
+
+    #[cfg(not(target_os = "windows"))]
+    let form: &[(&str, &str)] = &[
+        ("client_id",      CLIENT_ID),
+        ("client_secret",  CLIENT_SECRET),
+        ("grant_type",     "refresh_token"),
+        ("refresh_token",  refresh_token),
+        ("scope",          "r_usr w_usr"),
+    ];
+
     let resp = client
         .post(format!("{}/token", AUTH_BASE))
-        .form(&[
-            ("client_id", CLIENT_ID),
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token),
-            ("scope", "r_usr w_usr"),
-        ])
+        .form(form)
         .send()?;
 
     if !resp.status().is_success() {
@@ -101,15 +129,18 @@ pub fn refresh_token(refresh_token: &str) -> Result<Session> {
     parse_token_response(resp.json()?, refresh_token)
 }
 
-// ─── PKCE login ───────────────────────────────────────────────────────────────
+// ─── Windows: PKCE login ──────────────────────────────────────────────────────
 
+#[cfg(target_os = "windows")]
 const TIDAL_REDIRECT: &str = "tidal://login/auth";
 
 /// Path of the temp file the callback process writes the tidal:// URL into.
+#[cfg(target_os = "windows")]
 pub fn auth_callback_file() -> std::path::PathBuf {
     std::env::temp_dir().join("lumitide_auth.tmp")
 }
 
+#[cfg(target_os = "windows")]
 fn pkce_login() -> Result<Session> {
     let (verifier, challenge) = pkce_pair();
     let cuk = new_uuid();
@@ -117,19 +148,15 @@ fn pkce_login() -> Result<Session> {
     let auth_url = format!(
         "{}/authorize?client_id={}&client_unique_key={}&code_challenge={}\
          &code_challenge_method=S256&redirect_uri={}&response_type=code&scope=r_usr+w_usr",
-        LOGIN_BASE, CLIENT_ID, cuk, challenge,
+        "https://login.tidal.com", CLIENT_ID, cuk, challenge,
         percent_encode(TIDAL_REDIRECT),
     );
 
-    #[cfg(target_os = "windows")]
-    return pkce_login_windows(auth_url, verifier, cuk);
-
-    #[cfg(not(target_os = "windows"))]
-    pkce_login_manual(auth_url, verifier, cuk)
+    pkce_login_windows(auth_url, verifier, cuk)
 }
 
-/// Windows: temporarily register lumitide as the tidal:// handler so the OS
-/// calls us back automatically after the user logs in.
+/// Temporarily register lumitide as the tidal:// handler so the OS calls us back
+/// automatically after the user logs in, then restore the original handler.
 #[cfg(target_os = "windows")]
 fn pkce_login_windows(auth_url: String, verifier: String, cuk: String) -> Result<Session> {
     let exe = std::env::current_exe()
@@ -140,7 +167,6 @@ fn pkce_login_windows(auth_url: String, verifier: String, cuk: String) -> Result
     let callback_file = auth_callback_file();
     let _ = std::fs::remove_file(&callback_file);
 
-    // Register HKCU override — takes precedence over HKLM without admin rights.
     let reg_base = r"HKCU\Software\Classes\tidal";
     let _ = std::process::Command::new("reg")
         .args(["add", reg_base, "/ve", "/t", "REG_SZ", "/d", "URL:tidal Protocol", "/f"])
@@ -162,7 +188,7 @@ fn pkce_login_windows(auth_url: String, verifier: String, cuk: String) -> Result
 
     let code = poll_callback_file(&callback_file, std::time::Duration::from_secs(180));
 
-    // Always restore: delete our HKCU override so HKLM (Tidal app) takes over again.
+    // Always restore — delete HKCU override so HKLM (Tidal app) takes over again.
     let _ = std::process::Command::new("reg")
         .args(["delete", reg_base, "/f"])
         .output();
@@ -170,27 +196,8 @@ fn pkce_login_windows(auth_url: String, verifier: String, cuk: String) -> Result
     exchange_code(&code?, &verifier, &cuk, TIDAL_REDIRECT)
 }
 
-/// Non-Windows fallback: ask the user to paste the tidal:// URL manually.
-#[cfg(not(target_os = "windows"))]
-fn pkce_login_manual(auth_url: String, verifier: String, cuk: String) -> Result<Session> {
-    open_browser(&auth_url);
-    println!("\nOpening Tidal login in your browser...");
-    println!("If it doesn't open automatically, visit:");
-    println!("  {}\n", auth_url);
-    println!("After logging in, copy the full URL your browser tries to open");
-    println!("(starts with 'tidal://login/auth?code=...') and paste it below.\n");
-
-    let input: String = dialoguer::Input::new()
-        .with_prompt("Paste URL")
-        .interact_text()?;
-    let code = extract_code_from_url(&input)?;
-    exchange_code(&code, &verifier, &cuk, TIDAL_REDIRECT)
-}
-
-fn poll_callback_file(
-    path: &std::path::Path,
-    timeout: std::time::Duration,
-) -> Result<String> {
+#[cfg(target_os = "windows")]
+fn poll_callback_file(path: &std::path::Path, timeout: std::time::Duration) -> Result<String> {
     let start = std::time::Instant::now();
     while start.elapsed() < timeout {
         if path.exists() {
@@ -203,6 +210,7 @@ fn poll_callback_file(
     Err(anyhow!("Timed out waiting for Tidal auth callback"))
 }
 
+#[cfg(target_os = "windows")]
 fn exchange_code(code: &str, verifier: &str, cuk: &str, redirect_uri: &str) -> Result<Session> {
     let client = reqwest::blocking::Client::builder()
         .user_agent(TIDAL_UA)
@@ -210,13 +218,13 @@ fn exchange_code(code: &str, verifier: &str, cuk: &str, redirect_uri: &str) -> R
     let resp = client
         .post(format!("{}/token", AUTH_BASE))
         .form(&[
-            ("client_id", CLIENT_ID),
+            ("client_id",         CLIENT_ID),
             ("client_unique_key", cuk),
-            ("code", code),
-            ("code_verifier", verifier),
-            ("grant_type", "authorization_code"),
-            ("redirect_uri", redirect_uri),
-            ("scope", "r_usr w_usr"),
+            ("code",              code),
+            ("code_verifier",     verifier),
+            ("grant_type",        "authorization_code"),
+            ("redirect_uri",      redirect_uri),
+            ("scope",             "r_usr w_usr"),
         ])
         .send()?;
 
@@ -230,7 +238,94 @@ fn exchange_code(code: &str, verifier: &str, cuk: &str, redirect_uri: &str) -> R
     parse_token_response(resp.json()?, "")
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Non-Windows: device code login ──────────────────────────────────────────
+
+#[cfg(not(target_os = "windows"))]
+fn device_auth_flow() -> Result<Session> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent(TIDAL_UA)
+        .build()?;
+
+    #[derive(Deserialize)]
+    struct DeviceResp {
+        #[serde(rename = "deviceCode")]
+        device_code: String,
+        #[serde(rename = "userCode")]
+        user_code: String,
+        #[serde(rename = "verificationUri")]
+        verification_uri: String,
+        #[serde(rename = "expiresIn")]
+        expires_in: u64,
+        interval: u64,
+    }
+
+    let device: DeviceResp = client
+        .post(format!("{}/device_authorization", AUTH_BASE))
+        .form(&[("client_id", CLIENT_ID), ("scope", "r_usr w_usr w_sub")])
+        .send()?
+        .error_for_status()?
+        .json()?;
+
+    println!("\nTo log in to Tidal, visit:");
+    println!("  {}", device.verification_uri);
+    println!("And enter code: {}", device.user_code);
+    println!("\nWaiting for authorisation...");
+
+    let interval = std::time::Duration::from_secs(device.interval.max(5));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(device.expires_in);
+
+    loop {
+        if std::time::Instant::now() > deadline {
+            return Err(anyhow!("Device authorisation timed out"));
+        }
+        std::thread::sleep(interval);
+
+        let poll = client
+            .post(format!("{}/token", AUTH_BASE))
+            .form(&[
+                ("grant_type",    "urn:ietf:params:oauth:grant-type:device_code"),
+                ("device_code",   &device.device_code),
+                ("client_id",     CLIENT_ID),
+                ("client_secret", CLIENT_SECRET),
+                ("scope",         "r_usr w_usr w_sub"),
+            ])
+            .send()?;
+
+        if poll.status().is_success() {
+            #[derive(Deserialize)]
+            struct TokenResp {
+                access_token: String,
+                refresh_token: String,
+                expires_in: u64,
+                user: UserResp,
+            }
+            #[derive(Deserialize)]
+            struct UserResp {
+                #[serde(rename = "userId")]  user_id: u64,
+                #[serde(rename = "countryCode")] country_code: String,
+            }
+
+            let data: TokenResp = poll.json()?;
+            let expiry = Utc::now() + chrono::Duration::seconds(data.expires_in as i64);
+            println!("Login successful!");
+            return Ok(Session {
+                access_token:  data.access_token,
+                refresh_token: data.refresh_token,
+                expiry_time:   expiry.to_rfc3339(),
+                user_id:       data.user.user_id,
+                country_code:  data.user.country_code,
+                token_type:    "Bearer".to_string(),
+            });
+        }
+
+        let status = poll.status();
+        if !status.is_client_error() || status.as_u16() != 400 {
+            return Err(anyhow!("Auth poll failed: {}", status));
+        }
+    }
+}
+
+// ─── Shared helpers ───────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct TokenResp {
@@ -244,10 +339,8 @@ struct TokenResp {
 
 #[derive(Deserialize)]
 struct UserResp {
-    #[serde(rename = "userId")]
-    user_id: u64,
-    #[serde(rename = "countryCode")]
-    country_code: String,
+    #[serde(rename = "userId")]      user_id: u64,
+    #[serde(rename = "countryCode")] country_code: String,
 }
 
 fn parse_token_response(data: TokenResp, fallback_refresh: &str) -> Result<Session> {
@@ -263,21 +356,10 @@ fn parse_token_response(data: TokenResp, fallback_refresh: &str) -> Result<Sessi
     })
 }
 
-fn pkce_pair() -> (String, String) {
-    use rand::RngCore;
-    let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    let verifier = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
-    let hash = Sha256::digest(verifier.as_bytes());
-    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash);
-    (verifier, challenge)
-}
-
 pub fn new_uuid() -> String {
     use rand::RngCore;
     let mut b = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut b);
-    // Set version 4 and variant bits
     b[6] = (b[6] & 0x0F) | 0x40;
     b[8] = (b[8] & 0x3F) | 0x80;
     format!(
@@ -288,6 +370,20 @@ pub fn new_uuid() -> String {
     )
 }
 
+#[cfg(target_os = "windows")]
+fn pkce_pair() -> (String, String) {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    let verifier = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    let hash = Sha256::digest(verifier.as_bytes());
+    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash);
+    (verifier, challenge)
+}
+
+#[cfg(target_os = "windows")]
 fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
     for byte in s.bytes() {
@@ -300,6 +396,7 @@ fn percent_encode(s: &str) -> String {
     out
 }
 
+#[cfg(target_os = "windows")]
 fn extract_code_from_url(url: &str) -> Result<String> {
     let query = url.splitn(2, '?').nth(1).unwrap_or(url);
     query.split('&')

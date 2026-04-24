@@ -179,10 +179,15 @@ impl TidalClient {
     }
 
     pub fn stream_url(&self, id: u64) -> Result<StreamInfo> {
+        #[cfg(target_os = "windows")]
+        let quality = "LOSSLESS";
+        #[cfg(not(target_os = "windows"))]
+        let quality = "HIGH";
+
         let resp = self.get(
             &format!("tracks/{}/playbackinfopostpaywall", id),
             &[
-                ("audioquality", "LOSSLESS"),
+                ("audioquality", quality),
                 ("playbackmode", "STREAM"),
                 ("assetpresentation", "FULL"),
                 ("prefetchlevel", "NONE"),
