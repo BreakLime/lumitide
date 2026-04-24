@@ -579,4 +579,18 @@ mod tests {
         let t = parse(r#"{"id":1,"title":"Song","artists":[{"id":1,"name":"A"},{"id":2,"name":"B"},{"id":3,"name":"C"}],"album":{"id":100,"title":"Album"}}"#);
         assert_eq!(t.artists, vec!["A", "B", "C"]);
     }
+
+    /// Probe the live playback endpoint and print the raw response.
+    /// Run with: cargo test probe_playback -- --ignored --nocapture
+    #[test]
+    #[ignore = "requires a real Tidal session on disk (~/.config/lumitide/session.json)"]
+    fn probe_playback_endpoint() {
+        let session = crate::auth::get_session().expect("could not load session");
+        let track_id = 86430568u64;
+        let client = TidalClient::new(session);
+        match client.stream_url(track_id) {
+            Ok(u)  => println!("stream_url OK: {}", u),
+            Err(e) => println!("stream_url ERR: {}", e),
+        }
+    }
 }

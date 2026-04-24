@@ -636,7 +636,7 @@ fn play(
     let cfg = config::load();
 
     // ── Probe for sample rate / channels ─────────────────────────────────────
-    let probe_result = probe_flac(path);
+    let probe_result = probe_audio(path, download_done.clone());
     if probe_result.is_err() {
         // Must teardown before propagating — play() owns terminal by value
         teardown_terminal(&mut terminal);
@@ -697,7 +697,8 @@ fn play(
     let beat_times: Arc<Mutex<Vec<f64>>> = Arc::new(Mutex::new(Vec::new()));
     let analysis_done = Arc::new(AtomicBool::new(false));
 
-    let total_frames = probe_total_frames(path).unwrap_or(0);
+    let total_frames = probe_total_frames(path, download_done.clone())
+        .unwrap_or(track.duration * sample_rate as u64);
 
     // Query device config early so decode thread can resample to device rate
     let (device_sr, device_ch) = {
@@ -1151,7 +1152,15 @@ fn save_streamed_track(
     let out_dir = std::path::Path::new(output_dir);
     std::fs::create_dir_all(out_dir)?;
 
-    let filename = safe_filename(&format!("{} - {}.flac", track.artist_name, track.title));
+    // Detect actual format from the temp file's magic bytes
+    let ext = {
+        let mut magic = [0u8; 12];
+        let n = fs::File::open(temp_path)
+            .and_then(|mut fh| { use std::io::Read; fh.read(&mut magic) })
+            .unwrap_or(0);
+        crate::utils::audio_extension(&magic[..n])
+    };
+    let filename = safe_filename(&format!("{} - {}.{}", track.artist_name, track.title, ext));
     let dest = out_dir.join(&filename);
 
     // Copy in chunks so the progress bar actually moves
@@ -1173,9 +1182,19 @@ fn save_streamed_track(
 
 // ─── Audio utilities ──────────────────────────────────────────────────────────
 
-fn probe_flac(path: &std::path::Path) -> Result<(u32, usize)> {
+fn probe_audio(
+    path: &std::path::Path,
+    download_done: Arc<AtomicBool>,
+) -> Result<(u32, usize)> {
     let file = fs::File::open(path)?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    // Use StreamingFile so symphonia's internal seeks wait for data rather than
+    // hitting EOF on a partially-downloaded file (required for MP4/isomp4 demuxer).
+    let streaming = StreamingFile {
+        file,
+        download_done,
+        stop: Arc::new(AtomicBool::new(false)),
+    };
+    let mss = MediaSourceStream::new(Box::new(streaming), Default::default());
     let probed = symphonia::default::get_probe().format(
         &Hint::new(), mss, &FormatOptions::default(), &MetadataOptions::default(),
     )?;
@@ -1186,9 +1205,14 @@ fn probe_flac(path: &std::path::Path) -> Result<(u32, usize)> {
     Ok((sr, ch))
 }
 
-fn probe_total_frames(path: &std::path::Path) -> Option<u64> {
+fn probe_total_frames(path: &std::path::Path, download_done: Arc<AtomicBool>) -> Option<u64> {
     let file = fs::File::open(path).ok()?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let streaming = StreamingFile {
+        file,
+        download_done,
+        stop: Arc::new(AtomicBool::new(false)),
+    };
+    let mss = MediaSourceStream::new(Box::new(streaming), Default::default());
     let probed = symphonia::default::get_probe().format(
         &Hint::new(), mss, &FormatOptions::default(), &MetadataOptions::default(),
     ).ok()?;

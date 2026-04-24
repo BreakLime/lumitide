@@ -115,12 +115,9 @@ fn download_track(entry: &QueueEntry, http: &reqwest::blocking::Client) {
         }
     };
 
-    let filename = safe_filename(&format!(
-        "{} - {}.flac",
-        entry.track.artist_name, entry.track.title
-    ));
-    let dest = out_dir.join(&filename);
-    let tmp_path = dest.with_extension("tmp");
+    // Download to .tmp, then detect actual format from magic bytes before finalising filename
+    let tmp_name = safe_filename(&format!("{} - {}.tmp", entry.track.artist_name, entry.track.title));
+    let tmp_path = out_dir.join(&tmp_name);
 
     let resp = match http.get(&url).send() {
         Ok(r) => r,
@@ -161,6 +158,22 @@ fn download_track(entry: &QueueEntry, http: &reqwest::blocking::Client) {
         let _ = std::fs::remove_file(&tmp_path);
         return;
     }
+
+    // Read magic bytes to determine actual container format
+    let ext = {
+        let mut magic = [0u8; 12];
+        let n = std::fs::File::open(&tmp_path)
+            .and_then(|mut fh| fh.read(&mut magic))
+            .unwrap_or(0);
+        crate::utils::audio_extension(&magic[..n])
+    };
+
+    let filename = safe_filename(&format!(
+        "{} - {}.{}",
+        entry.track.artist_name, entry.track.title, ext
+    ));
+    let dest = out_dir.join(&filename);
+
     if std::fs::rename(&tmp_path, &dest).is_err() {
         let _ = std::fs::remove_file(&tmp_path);
         return;
@@ -245,5 +258,33 @@ mod tests {
     fn status_returns_none_when_idle() {
         let q = DownloadQueue::new();
         assert!(q.status().is_none());
+    }
+
+    // Tidal now serves MP4/AAC — push_tracks must recognise .m4a as already saved
+    #[test]
+    fn push_tracks_skips_m4a_already_saved() {
+        let q = DownloadQueue::new();
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().to_string_lossy().to_string();
+        let filename = safe_filename("Artist - Track.m4a");
+        std::fs::File::create(dir.path().join(filename)).unwrap();
+        let tracks = vec![
+            make_track(1, "Artist", "Track"),
+            make_track(2, "Artist", "New Track"),
+        ];
+        q.push_tracks(tracks, make_session(), out);
+        // Only "New Track" should be queued; the .m4a one is already saved
+        assert_eq!(q.total.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn audio_extension_identifies_flac() {
+        assert_eq!(crate::utils::audio_extension(b"fLaC\x00\x00\x00\x22"), "flac");
+    }
+
+    #[test]
+    fn audio_extension_identifies_m4a() {
+        // MP4 box: 4-byte size then "ftyp"
+        assert_eq!(crate::utils::audio_extension(b"\x00\x00\x00\x1cftypisom"), "m4a");
     }
 }

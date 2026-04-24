@@ -5,16 +5,23 @@ use std::path::Path;
 
 use crate::api::TrackInfo;
 
-/// Embed Vorbis tags and cover art into a FLAC file.
+/// Embed tags and cover art into an audio file (.flac or .m4a).
 pub fn embed(path: &Path, track: &TrackInfo, cover_bytes: Option<&[u8]>) -> Result<()> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    if ext == "m4a" {
+        embed_m4a(path, track, cover_bytes)
+    } else {
+        embed_flac(path, track, cover_bytes)
+    }
+}
+
+fn embed_flac(path: &Path, track: &TrackInfo, cover_bytes: Option<&[u8]>) -> Result<()> {
     let mut tag = Tag::read_from_path(path)
         .unwrap_or_else(|_| Tag::new());
 
-    // Clear existing tags and pictures
     tag.remove_blocks(metaflac::block::BlockType::VorbisComment);
     tag.remove_blocks(metaflac::block::BlockType::Picture);
 
-    // Vorbis comments
     {
         let vc = tag.vorbis_comments_mut();
         vc.set_title(vec![track.title.clone()]);
@@ -38,13 +45,11 @@ pub fn embed(path: &Path, track: &TrackInfo, cover_bytes: Option<&[u8]>) -> Resu
         }
     }
 
-    // Embed cover art
     if let Some(bytes) = cover_bytes {
         let mut pic = metaflac::block::Picture::new();
         pic.picture_type = PictureType::CoverFront;
         pic.mime_type = "image/jpeg".to_string();
         pic.description = String::new();
-        // Attempt to read dimensions from the JPEG
         let (w, h) = image_dimensions(bytes);
         pic.width = w;
         pic.height = h;
@@ -55,6 +60,37 @@ pub fn embed(path: &Path, track: &TrackInfo, cover_bytes: Option<&[u8]>) -> Resu
     }
 
     tag.save()?;
+    Ok(())
+}
+
+fn embed_m4a(path: &Path, track: &TrackInfo, cover_bytes: Option<&[u8]>) -> Result<()> {
+    use lofty::prelude::{Accessor, AudioFile, TaggedFileExt};
+    use lofty::config::WriteOptions;
+    use lofty::picture::{MimeType, Picture, PictureType};
+
+    let mut tagged = lofty::read_from_path(path)
+        .map_err(|e| anyhow::anyhow!("lofty open: {}", e))?;
+
+    if let Some(tag) = tagged.primary_tag_mut() {
+        tag.remove_picture_type(PictureType::CoverFront);
+        tag.set_title(track.title.clone());
+        tag.set_artist(track.artist_name.clone());
+        tag.set_album(track.album_name.clone());
+        tag.set_track(track.track_num);
+        tag.set_disk(track.volume_num);
+
+        if let Some(bytes) = cover_bytes {
+            tag.push_picture(Picture::new_unchecked(
+                PictureType::CoverFront,
+                Some(MimeType::Jpeg),
+                None,
+                bytes.to_vec(),
+            ));
+        }
+    }
+
+    tagged.save_to_path(path, WriteOptions::default())
+        .map_err(|e| anyhow::anyhow!("lofty save: {}", e))?;
     Ok(())
 }
 

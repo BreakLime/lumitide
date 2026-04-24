@@ -2,7 +2,15 @@
 
 A terminal music player for Tidal, written in Rust.
 
-Stream lossless audio from your Tidal account directly in the terminal, with album art, a live spectrum visualizer, beat/drop detection, and a background download queue.
+> [!WARNING]
+> **If you are on v1.4.0 or earlier, please update to v1.4.1.**
+> Tidal changed their streaming API — playback and downloads will fail on older versions.
+> Grab the latest release from the [Releases](https://github.com/BreakLime/lumitide/releases) page or re-run the installer.
+
+Stream audio from your Tidal account directly in the terminal, with album art, a live spectrum visualizer, beat/drop detection, and a background download queue.
+
+> [!NOTE]
+> Tidal no longer serves lossless FLAC to third-party clients — audio is streamed and downloaded as **MP4 (HIGH quality)**.
 
 ![Lumitide demo](assets/demo.gif)
 
@@ -12,7 +20,7 @@ Stream lossless audio from your Tidal account directly in the terminal, with alb
 
 ## Features
 
-- **Stream** lossless FLAC from Tidal in real time
+- **Stream** audio from Tidal in real time (AAC/HIGH quality — Tidal no longer serves lossless FLAC to third-party clients)
 - **Album cover art** rendered as Braille characters in the terminal
 - **Spectrum visualizer** with peak-hold bars and beat/drop detection
 - **Album-art color theming** — title, spectrum bars, and transition arrows all take their color from the current cover
