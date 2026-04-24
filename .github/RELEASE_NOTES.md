@@ -1,26 +1,14 @@
 ## What's new
 
-### Background download queue
+### Tidal API compatibility fix
 
-Press `d` on any album, mix, playlist, or search result to queue it for
-background download — without interrupting playback or navigation. Tracks
-download one by one while you keep browsing.
+Tidal no longer serves lossless FLAC to third-party clients — audio is now delivered as MP4 (HIGH quality). v1.4.1 fully adapts to this:
 
-A live `⬇ Artist - Title  N / M` indicator appears at the bottom-right of
-every screen while the queue is running. The counter grows as you queue
-more items.
+- Playback streams MP4 correctly without stalling
+- Downloads detect the actual format from the file and save as `.m4a`
+- Metadata (tags + cover art) is embedded correctly for both FLAC and MP4 files
+- The "already downloaded" check now recognises both `.flac` and `.m4a` files
 
-### Consistent list navigation
-
-All list views (library, search, mixes, playlists) now use the same
-keyboard controls:
-
-| Key | Action |
-|-----|--------|
-| `↑` / `↓` or `k` / `j` | Navigate |
-| `Enter` | Play |
-| `d` | Queue for background download |
-| `Esc` / `q` | Go back |
+**If you are on v1.4.0 or earlier, update now — playback and downloads will fail on older versions.**
 
 ---
-
