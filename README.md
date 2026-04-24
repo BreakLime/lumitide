@@ -11,6 +11,7 @@ Stream audio from your Tidal account directly in the terminal, with album art, a
 
 > [!NOTE]
 > **Audio quality is platform-dependent.** Windows uses the Tidal desktop app auth flow and streams/downloads **lossless FLAC**. Linux and macOS use a device code flow and receive **MP4 (HIGH quality / AAC)**. Native FLAC support for Linux/macOS is planned.
+> See [docs/how-flac-works.md](docs/how-flac-works.md) for a full technical write-up of the auth flow and stream decryption.
 
 ![Lumitide demo](assets/demo.gif)
 
