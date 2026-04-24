@@ -1,14 +1,16 @@
 ## What's new
 
-### Tidal API compatibility fix
+### Lossless FLAC restored on Windows
 
-Tidal no longer serves lossless FLAC to third-party clients — audio is now delivered as MP4 (HIGH quality). v1.4.1 fully adapts to this:
+Windows now streams and downloads **lossless FLAC** again. This works by replicating the Tidal desktop app's PKCE auth flow, which issues tokens with full lossless access. On login, a browser window opens automatically — just log in and Lumitide handles the rest.
 
-- Playback streams MP4 correctly without stalling
-- Downloads detect the actual format from the file and save as `.m4a`
-- Metadata (tags + cover art) is embedded correctly for both FLAC and MP4 files
-- The "already downloaded" check now recognises both `.flac` and `.m4a` files
+Linux and macOS continue to use the device code login flow and receive **MP4 (HIGH quality / AAC)**. Native FLAC support for those platforms is planned.
 
-**If you are on v1.4.0 or earlier, update now — playback and downloads will fail on older versions.**
+### What changed under the hood
+
+- **New auth flow (Windows):** PKCE OAuth with the Tidal desktop client — browser opens automatically, OS redirects back to Lumitide, no copy-pasting needed
+- **AES-128-CTR stream decryption:** lossless streams are encrypted at rest; Lumitide now unwraps the per-track key and decrypts on the fly during download
+- **Platform-split quality:** `LOSSLESS` requested on Windows, `HIGH` on Linux/macOS
+- **End-to-end test:** a new ignored test (`e2e_stream_decrypt`) verifies the full pipeline from session load through decryption to a valid FLAC magic byte check and Symphonia probe
 
 ---

@@ -1,6 +1,6 @@
 [package]
 name = "lumitide"
-version = "1.4.1"
+version = "1.4.2"
 edition = "2021"
 description = "Console music player for Tidal"
 license = "MIT"
