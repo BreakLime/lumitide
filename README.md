@@ -3,14 +3,14 @@
 A terminal music player for Tidal, written in Rust.
 
 > [!WARNING]
-> **If you are on v1.4.0 or earlier, please update to v1.4.1.**
+> **If you are on v1.4.0 or earlier, please update to the latest version.**
 > Tidal changed their streaming API — playback and downloads will fail on older versions.
 > Grab the latest release from the [Releases](https://github.com/BreakLime/lumitide/releases) page or re-run the installer.
 
 Stream audio from your Tidal account directly in the terminal, with album art, a live spectrum visualizer, beat/drop detection, and a background download queue.
 
 > [!NOTE]
-> Tidal no longer serves lossless FLAC to third-party clients — audio is streamed and downloaded as **MP4 (HIGH quality)**.
+> **Audio quality is platform-dependent.** Windows uses the Tidal desktop app auth flow and streams/downloads **lossless FLAC**. Linux and macOS use a device code flow and receive **MP4 (HIGH quality / AAC)**. Native FLAC support for Linux/macOS is planned.
 
 ![Lumitide demo](assets/demo.gif)
 
@@ -20,7 +20,7 @@ Stream audio from your Tidal account directly in the terminal, with album art, a
 
 ## Features
 
-- **Stream** audio from Tidal in real time (AAC/HIGH quality — Tidal no longer serves lossless FLAC to third-party clients)
+- **Stream** audio from Tidal in real time — **lossless FLAC** on Windows, **MP4/AAC** (HIGH quality) on Linux/macOS
 - **Album cover art** rendered as Braille characters in the terminal
 - **Spectrum visualizer** with peak-hold bars and beat/drop detection
 - **Album-art color theming** — title, spectrum bars, and transition arrows all take their color from the current cover
@@ -114,7 +114,13 @@ sudo dnf install alsa-lib-devel  # Fedora
 
 ## Authentication
 
-On first run, Lumitide opens a Tidal device-authorization flow:
+Authentication is handled automatically on first run and differs by platform.
+
+**Windows** — Lumitide opens a browser window for the Tidal login page. After
+you log in, the OS redirects back to Lumitide automatically and the session is
+saved. No copy-pasting required.
+
+**Linux / macOS** — Lumitide prints a URL and a short code:
 
 ```
 To log in to Tidal, visit:
@@ -124,9 +130,10 @@ And enter code: ABCD-1234
 Waiting for authorisation...
 ```
 
-Visit the URL, enter the code, and approve the login. Your session is saved to
-`~/.config/lumitide/session.json` and refreshed automatically on subsequent
-runs.
+Visit the URL, enter the code, and approve the login.
+
+In both cases your session is saved to `~/.config/lumitide/session.json` and
+refreshed automatically on subsequent runs.
 
 ## Usage
 
@@ -210,7 +217,7 @@ If RAM usage matters (e.g. on a low-power device), enabling `calm_mode` in confi
 
 Lumitide is an unofficial client. Use it only with a valid Tidal subscription and in accordance with [Tidal's Terms of Service](https://tidal.com/terms).
 
-The app credentials bundled in `src/auth.rs` are the same public credentials used by [python-tidal](https://github.com/tamland/python-tidal) and other open-source Tidal clients. They are not personal credentials.
+The app credentials bundled in `src/auth.rs` are not personal credentials. On Windows, Lumitide replicates the Tidal desktop app's PKCE auth flow to obtain lossless-capable tokens. On Linux/macOS it uses the same public client credentials as [python-tidal](https://github.com/tamland/python-tidal) and other open-source Tidal clients.
 
 ## License
 
