@@ -28,8 +28,21 @@ pub struct PanelState<'a> {
     pub show_controls: bool,
     pub show_controls_hint: bool,
     pub queue_status: Option<String>,
-    /// Transient "link copied" message shown in the info line for ~2s after `s`.
-    pub share_flash: Option<String>,
+    /// Transient `(message, is_error)` shown in the info line for ~2s after `s`.
+    pub share_flash: Option<(String, bool)>,
+}
+
+/// Style for a transient status/flash message in the info line: the accent color
+/// (album-art color, falling back to green) in bold for success, dim for errors.
+fn status_style(is_error: bool, bar_color: Option<(u8, u8, u8)>, dim: Style) -> Style {
+    if is_error {
+        dim
+    } else {
+        match bar_color {
+            Some((r, g, b)) => Style::new().fg(Color::Rgb(r, g, b)).add_modifier(Modifier::BOLD),
+            None => Style::new().fg(Color::Green).add_modifier(Modifier::BOLD),
+        }
+    }
 }
 
 pub fn render(frame: &mut Frame, state: &PanelState) {
@@ -84,7 +97,7 @@ pub fn render(frame: &mut Frame, state: &PanelState) {
         let area = Rect::new(x, y, block_w.min(terminal.width), block_h.min(terminal.height));
 
         let hint_text = if state.is_local {
-            "← prev  Spc pause  → next  ↑↓ vol  q/Esc quit"
+            "← prev  Spc pause  → next  ↑↓ vol  s share  q/Esc quit"
         } else {
             "← prev  Spc pause  → next  ↑↓ vol  d download  s share  r radio  q/Esc quit"
         };
@@ -149,40 +162,29 @@ pub fn render(frame: &mut Frame, state: &PanelState) {
         ));
     }
 
-    if !state.dl_status.is_empty() && !state.dl_status.starts_with('⬇') {
-        // Show status ("✓ Saved", "✓ Saving...", "✗ Error") in the info line
-        let status_style = if state.dl_status.starts_with('✓') {
-            match state.bar_color {
-                Some((r, g, b)) => Style::new().fg(Color::Rgb(r, g, b)).add_modifier(Modifier::BOLD),
-                None => Style::new().fg(Color::Green).add_modifier(Modifier::BOLD),
-            }
-        } else {
-            dim // error states
-        };
-        time_line.push(Span::styled(
-            format!("  vol {}%{}", vol_pct, pause_str),
-            Style::new().add_modifier(Modifier::BOLD),
-        ));
-        time_line.push(Span::styled(
-            format!("  {}", state.dl_status),
-            status_style,
-        ));
+    // One status slot on the info line. The transient share flash (~2s) takes
+    // precedence over the download status so the two never collide on the
+    // fixed-width right column. `(text, is_error)`.
+    let status: Option<(String, bool)> = if let Some((msg, is_err)) = &state.share_flash {
+        Some((msg.clone(), *is_err))
+    } else if !state.dl_status.is_empty() && !state.dl_status.starts_with('⬇') {
+        // "✓ Saved" / "✓ Saving..." are success; anything else ("✗ …") is an error.
+        Some((state.dl_status.to_string(), !state.dl_status.starts_with('✓')))
     } else {
+        None
+    };
+
+    let vol_style = if status.is_some() {
+        Style::new().add_modifier(Modifier::BOLD)
+    } else {
+        Style::new()
+    };
+    time_line.push(Span::styled(format!("  vol {}%{}", vol_pct, pause_str), vol_style));
+    if let Some((text, is_err)) = status {
         time_line.push(Span::styled(
-            format!("  vol {}%{}", vol_pct, pause_str),
-            Style::new(),
+            format!("  {}", text),
+            status_style(is_err, state.bar_color, dim),
         ));
-    }
-    if let Some(msg) = &state.share_flash {
-        let flash_style = if msg.starts_with('✗') {
-            dim
-        } else {
-            match state.bar_color {
-                Some((r, g, b)) => Style::new().fg(Color::Rgb(r, g, b)).add_modifier(Modifier::BOLD),
-                None => Style::new().fg(Color::Green).add_modifier(Modifier::BOLD),
-            }
-        };
-        time_line.push(Span::styled(format!("  {}", msg), flash_style));
     }
     right.push(Line::from(time_line));
     right.push(Line::raw(""));

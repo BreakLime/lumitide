@@ -5,8 +5,9 @@ use base64::Engine;
 
 /// Copy `text` to the system clipboard via the OSC 52 terminal escape.
 ///
-/// Dependency-free and works over SSH — the terminal owns the clipboard, so the
-/// contents survive after Lumitide exits. Requires an OSC 52-capable terminal
+/// No OS clipboard library or daemon required, and it works over SSH — the
+/// terminal owns the clipboard, so the contents survive after Lumitide exits.
+/// Requires an OSC 52-capable terminal
 /// (Alacritty, Kitty, iTerm2, WezTerm, Windows Terminal, foot, …). Inside tmux
 /// the user must set `set-clipboard on` for the escape to be forwarded.
 pub fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
