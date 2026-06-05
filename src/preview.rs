@@ -707,6 +707,8 @@ fn play(
         if already_saved { "✓ Saved".to_string() } else { String::new() }
     ));
     let dl_flash_until: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+    // Transient (message, expiry) shown in the info line after pressing `s` (share).
+    let share_flash: Arc<Mutex<Option<(String, Instant)>>> = Arc::new(Mutex::new(None));
 
     let drop_times: Arc<Mutex<Vec<f64>>> = Arc::new(Mutex::new(Vec::new()));
     let beat_times: Arc<Mutex<Vec<f64>>> = Arc::new(Mutex::new(Vec::new()));
@@ -950,6 +952,15 @@ fn play(
         let dl_b = dl_bytes.load(Ordering::Relaxed);
         let dl_t = dl_total.load(Ordering::Relaxed);
 
+        let share_msg = {
+            let mut g = share_flash.lock().unwrap_or_else(|e| e.into_inner());
+            match g.as_ref() {
+                Some((m, t)) if Instant::now() < *t => Some(m.clone()),
+                Some(_) => { *g = None; None } // expired
+                None => None,
+            }
+        };
+
         // Build visualisation lines
         let spec = spec_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let vis = panel::build_vis_lines(
@@ -976,6 +987,7 @@ fn play(
             show_controls,
             show_controls_hint: cfg.show_controls_hint,
             queue_status,
+            share_flash: share_msg,
         };
 
         terminal.draw(|f| panel::render(f, &panel_state))?;
@@ -1028,6 +1040,19 @@ fn play(
                         }
                         KeyCode::Char('?') => {
                             show_controls = !show_controls;
+                        }
+                        KeyCode::Char('s') | KeyCode::Char('S') => {
+                            let msg = if is_local {
+                                "🔗 Local track — no link".to_string()
+                            } else {
+                                let url = format!("https://tidal.com/browse/track/{}", track.id);
+                                match crate::utils::copy_to_clipboard(&url) {
+                                    Ok(_)  => "🔗 Link copied".to_string(),
+                                    Err(_) => "✗ Copy failed".to_string(),
+                                }
+                            };
+                            *share_flash.lock().unwrap_or_else(|e| e.into_inner()) =
+                                Some((msg, Instant::now() + Duration::from_secs(2)));
                         }
                         KeyCode::Char('d') | KeyCode::Char('D') => {
                             if already_saved || is_local {

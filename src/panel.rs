@@ -28,6 +28,8 @@ pub struct PanelState<'a> {
     pub show_controls: bool,
     pub show_controls_hint: bool,
     pub queue_status: Option<String>,
+    /// Transient "link copied" message shown in the info line for ~2s after `s`.
+    pub share_flash: Option<String>,
 }
 
 pub fn render(frame: &mut Frame, state: &PanelState) {
@@ -84,7 +86,7 @@ pub fn render(frame: &mut Frame, state: &PanelState) {
         let hint_text = if state.is_local {
             "← prev  Spc pause  → next  ↑↓ vol  q/Esc quit"
         } else {
-            "← prev  Spc pause  → next  ↑↓ vol  d download  r radio  q/Esc quit"
+            "← prev  Spc pause  → next  ↑↓ vol  d download  s share  r radio  q/Esc quit"
         };
         let controls = Title::from(Line::styled(hint_text, dim))
             .alignment(Alignment::Center);
@@ -170,6 +172,17 @@ pub fn render(frame: &mut Frame, state: &PanelState) {
             format!("  vol {}%{}", vol_pct, pause_str),
             Style::new(),
         ));
+    }
+    if let Some(msg) = &state.share_flash {
+        let flash_style = if msg.starts_with('✗') {
+            dim
+        } else {
+            match state.bar_color {
+                Some((r, g, b)) => Style::new().fg(Color::Rgb(r, g, b)).add_modifier(Modifier::BOLD),
+                None => Style::new().fg(Color::Green).add_modifier(Modifier::BOLD),
+            }
+        };
+        time_line.push(Span::styled(format!("  {}", msg), flash_style));
     }
     right.push(Line::from(time_line));
     right.push(Line::raw(""));

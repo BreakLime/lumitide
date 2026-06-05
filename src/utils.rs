@@ -1,4 +1,21 @@
+use std::io::Write;
 use std::path::PathBuf;
+
+use base64::Engine;
+
+/// Copy `text` to the system clipboard via the OSC 52 terminal escape.
+///
+/// Dependency-free and works over SSH — the terminal owns the clipboard, so the
+/// contents survive after Lumitide exits. Requires an OSC 52-capable terminal
+/// (Alacritty, Kitty, iTerm2, WezTerm, Windows Terminal, foot, …). Inside tmux
+/// the user must set `set-clipboard on` for the escape to be forwarded.
+pub fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
+    let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+    let seq = format!("\x1b]52;c;{b64}\x07");
+    let mut out = std::io::stdout();
+    out.write_all(seq.as_bytes())?;
+    out.flush()
+}
 
 /// Remove filesystem-unsafe characters and truncate to 200 chars.
 pub fn safe_filename(name: &str) -> String {

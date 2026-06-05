@@ -15,7 +15,7 @@ Stream audio from your Tidal account directly in the terminal, with album art, a
 
 ![Lumitide demo](assets/demo.gif)
 
-**Playback:** `→/n` next &nbsp;`←/p` prev &nbsp;`Space` pause &nbsp;`↑/+` vol up &nbsp;`↓/-` vol down &nbsp;`d` download &nbsp;`r` radio &nbsp;`?` controls &nbsp;`q/Esc` back
+**Playback:** `→/n` next &nbsp;`←/p` prev &nbsp;`Space` pause &nbsp;`↑/+` vol up &nbsp;`↓/-` vol down &nbsp;`d` download &nbsp;`s` share &nbsp;`r` radio &nbsp;`?` controls &nbsp;`q/Esc` back
 
 **Lists:** `↑↓` / `jk` navigate &nbsp;`Enter` play &nbsp;`d` queue for download &nbsp;`Esc/q` back
 
