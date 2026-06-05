@@ -916,6 +916,10 @@ fn play(
     // ── Info popups (lazily fetched in the background on first open) ───────────
     let mut show_track_info = false;
     let mut show_artist_info = false;
+    // Vertical scroll offset for whichever popup is open (reset when toggling).
+    // Clamped to the content each frame by the render fn, which returns the
+    // applied offset so a press past the end doesn't strand the value.
+    let mut popup_scroll: u16 = 0;
     let credits: Arc<Mutex<Option<Vec<Credit>>>> = Arc::new(Mutex::new(None));
     let credits_started = Arc::new(AtomicBool::new(false));
     let artist_detail: Arc<Mutex<Option<ArtistDetail>>> = Arc::new(Mutex::new(None));
@@ -1006,22 +1010,27 @@ fn play(
             (None, None)
         };
 
+        let mut applied_scroll = popup_scroll;
         terminal.draw(|f| {
             panel::render(f, &panel_state);
             if show_track_info {
                 let credits_ref = credits_snap.as_ref().and_then(|c| c.as_deref());
                 let lines = panel::build_track_info_lines(track, credits_ref, bar_color);
-                panel::render_info_popup(f, "Track Info", lines, bar_color);
+                applied_scroll = panel::render_info_popup(f, "Track Info", lines, bar_color, popup_scroll);
             } else if show_artist_info {
-                panel::render_artist_popup(
+                applied_scroll = panel::render_artist_popup(
                     f,
                     &track.artist_name,
                     artist_snap.as_ref(),
                     artist_art_snap.as_ref(),
                     bar_color,
+                    popup_scroll,
                 );
             }
         })?;
+        // Adopt the clamped offset the popup actually used, so "up" responds
+        // immediately even after the user held "down" past the end.
+        popup_scroll = applied_scroll;
 
         // ── Keyboard ─────────────────────────────────────────────────────────
         if event::poll(Duration::from_millis(90))? {
@@ -1061,6 +1070,20 @@ fn play(
                                 });
                             }
                         }
+                        // While a popup is open, ↑/↓ scroll it instead of changing
+                        // volume (the popup overlays the whole UI). +/- always do volume.
+                        KeyCode::Up if show_track_info || show_artist_info => {
+                            popup_scroll = popup_scroll.saturating_sub(1);
+                        }
+                        KeyCode::Down if show_track_info || show_artist_info => {
+                            popup_scroll = popup_scroll.saturating_add(1);
+                        }
+                        KeyCode::PageUp if show_track_info || show_artist_info => {
+                            popup_scroll = popup_scroll.saturating_sub(10);
+                        }
+                        KeyCode::PageDown if show_track_info || show_artist_info => {
+                            popup_scroll = popup_scroll.saturating_add(10);
+                        }
                         KeyCode::Up | KeyCode::Char('+') | KeyCode::Char('=') => {
                             {
                                 let mut v = volume.lock().unwrap_or_else(|e| e.into_inner());
@@ -1081,6 +1104,7 @@ fn play(
                         KeyCode::Char('t') | KeyCode::Char('T') => {
                             show_artist_info = false;
                             show_track_info = !show_track_info;
+                            popup_scroll = 0; // start at the top each time
                             // Lazily fetch credits the first time the popup opens
                             if show_track_info && !credits_started.swap(true, Ordering::Relaxed) {
                                 match &session {
@@ -1102,6 +1126,7 @@ fn play(
                         KeyCode::Char('a') | KeyCode::Char('A') => {
                             show_track_info = false;
                             show_artist_info = !show_artist_info;
+                            popup_scroll = 0; // start at the top each time
                             // Lazily fetch artist detail + picture the first time
                             if show_artist_info && !artist_started.swap(true, Ordering::Relaxed) {
                                 match (&session, track.artist_id) {

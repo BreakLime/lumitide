@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap, block::Title},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap, block::{Position, Title}},
     Frame,
 };
 
@@ -302,6 +302,36 @@ pub fn build_track_info_lines(
 }
 
 /// Compute a centred rect for a popup of the given inner content size.
+/// Count how many rows `lines` occupy once greedily word-wrapped to `width`,
+/// mirroring ratatui's `Wrap` so scroll can be clamped to the real content
+/// height. (ratatui's own `line_count` is behind an unstable feature, so we do
+/// the small amount of arithmetic ourselves.)
+fn wrapped_height(lines: &[Line<'static>], width: u16) -> u16 {
+    let w = width.max(1) as usize;
+    lines.iter().map(|line| {
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        let mut rows: u16 = 1;
+        let mut col = 0usize; // chars used on the current row
+        for word in text.split_whitespace() {
+            let wl = word.chars().count();
+            if col == 0 {
+                col = wl;
+            } else if col + 1 + wl <= w {
+                col += 1 + wl;
+            } else {
+                rows += 1;
+                col = wl;
+            }
+            // A single word longer than the line hard-wraps onto extra rows.
+            while col > w {
+                rows += 1;
+                col -= w;
+            }
+        }
+        rows
+    }).sum()
+}
+
 fn centered(area: Rect, inner_w: u16, inner_h: u16) -> Rect {
     let box_w = (inner_w + 2).min(area.width);
     let box_h = (inner_h + 2).min(area.height);
@@ -310,13 +340,16 @@ fn centered(area: Rect, inner_w: u16, inner_h: u16) -> Rect {
     Rect::new(x, y, box_w, box_h)
 }
 
-/// Render a bordered, centred text popup over the current frame.
+/// Render a bordered, centred text popup over the current frame. `scroll` is the
+/// requested vertical offset; the value actually applied (clamped to the content)
+/// is returned so the caller can keep its stored offset in range.
 pub fn render_info_popup(
     frame: &mut Frame,
     title: &str,
     lines: Vec<Line<'static>>,
     accent: Option<(u8, u8, u8)>,
-) {
+    scroll: u16,
+) -> u16 {
     let area = frame.area();
     let content_w = lines.iter().map(|l| l.width()).max().unwrap_or(24) as u16;
     let inner_w = content_w.clamp(28, area.width.saturating_sub(4).max(28));
@@ -324,23 +357,35 @@ pub fn render_info_popup(
     let rect = centered(area, inner_w + 1, inner_h); // +1 for left padding
 
     let border = accent_style(accent);
-    let block = Block::default()
+    // Inner geometry depends only on the borders (titles render on the border row).
+    let inner = Block::default().borders(Borders::ALL).inner(rect);
+    // Pad one column on the left
+    let text_area = Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(1), inner.height);
+
+    let total = wrapped_height(&lines, text_area.width);
+    let max_scroll = total.saturating_sub(text_area.height);
+    let scroll = scroll.min(max_scroll);
+    let para = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+
+    let mut block = Block::default()
         .borders(Borders::ALL)
         .border_style(border)
         .title(Title::from(Span::styled(
             format!(" {title} "),
             border.add_modifier(Modifier::BOLD),
         )).alignment(Alignment::Center));
-    let inner = block.inner(rect);
+    if max_scroll > 0 {
+        block = block.title(
+            Title::from(Span::styled(" ↑↓ scroll ", border))
+                .position(Position::Bottom)
+                .alignment(Alignment::Right),
+        );
+    }
 
     frame.render_widget(Clear, rect);
     frame.render_widget(block, rect);
-    // Pad one column on the left
-    let text_area = Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(1), inner.height);
-    frame.render_widget(
-        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
-        text_area,
-    );
+    frame.render_widget(para.scroll((scroll, 0)), text_area);
+    scroll
 }
 
 /// Render the artist-info popup: pixelated picture on the left, name +
@@ -351,7 +396,8 @@ pub fn render_artist_popup(
     detail: Option<&ArtistDetail>,
     art: Option<&CoverArt>,
     accent: Option<(u8, u8, u8)>,
-) {
+    scroll: u16,
+) -> u16 {
     let area = frame.area();
     let dim = Style::new().fg(Color::DarkGray);
     let bold_accent = accent_style(accent).add_modifier(Modifier::BOLD);
@@ -387,14 +433,35 @@ pub fn render_artist_popup(
     let rect = centered(area, inner_w, inner_h);
 
     let border = accent_style(accent);
-    let block = Block::default()
+    // Inner geometry depends only on the borders (titles render on the border row).
+    let inner = Block::default().borders(Borders::ALL).inner(rect);
+
+    // Work out where the bio text goes (and its width) so scroll can be clamped.
+    let info_area = if pic_col > 0 {
+        Layout::horizontal([Constraint::Length(pic_col), Constraint::Min(0)]).split(inner)[1]
+    } else {
+        Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(1), inner.height)
+    };
+
+    let total = wrapped_height(&info, info_area.width);
+    let max_scroll = total.saturating_sub(info_area.height);
+    let scroll = scroll.min(max_scroll);
+    let para = Paragraph::new(Text::from(info)).wrap(Wrap { trim: true }).scroll((scroll, 0));
+
+    let mut block = Block::default()
         .borders(Borders::ALL)
         .border_style(border)
         .title(Title::from(Span::styled(
             " Artist ",
             border.add_modifier(Modifier::BOLD),
         )).alignment(Alignment::Center));
-    let inner = block.inner(rect);
+    if max_scroll > 0 {
+        block = block.title(
+            Title::from(Span::styled(" ↑↓ scroll ", border))
+                .position(Position::Bottom)
+                .alignment(Alignment::Right),
+        );
+    }
 
     frame.render_widget(Clear, rect);
     frame.render_widget(block, rect);
@@ -405,19 +472,41 @@ pub fn render_artist_popup(
             Constraint::Min(0),
         ])
         .split(inner);
-        frame.render_widget(
-            Paragraph::new(Text::from(cover_lines.to_vec())),
-            cols[0],
-        );
-        frame.render_widget(
-            Paragraph::new(Text::from(info)).wrap(Wrap { trim: true }),
-            cols[1],
-        );
+        frame.render_widget(Paragraph::new(Text::from(cover_lines.to_vec())), cols[0]);
+        frame.render_widget(para, cols[1]);
     } else {
-        let text_area = Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(1), inner.height);
-        frame.render_widget(
-            Paragraph::new(Text::from(info)).wrap(Wrap { trim: true }),
-            text_area,
-        );
+        frame.render_widget(para, info_area);
+    }
+    scroll
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(s: &str) -> Line<'static> {
+        Line::from(s.to_string())
+    }
+
+    #[test]
+    fn wrapped_height_single_short_line() {
+        assert_eq!(wrapped_height(&[line("hello world")], 40), 1);
+    }
+
+    #[test]
+    fn wrapped_height_wraps_on_word_boundary() {
+        // "aaaa bbbb" fills width 9, "cccc" spills to a second row.
+        assert_eq!(wrapped_height(&[line("aaaa bbbb cccc")], 9), 2);
+    }
+
+    #[test]
+    fn wrapped_height_hard_wraps_long_word() {
+        // An 8-char word at width 3 needs ceil(8/3) = 3 rows.
+        assert_eq!(wrapped_height(&[line("aaaaaaaa")], 3), 3);
+    }
+
+    #[test]
+    fn wrapped_height_sums_multiple_lines() {
+        assert_eq!(wrapped_height(&[line("one"), line(""), line("two")], 40), 3);
     }
 }
