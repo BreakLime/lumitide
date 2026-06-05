@@ -27,6 +27,8 @@ pub struct PanelState<'a> {
     pub is_local: bool,
     /// Whether the current track is a Tidal favorite (shows a heart by the title).
     pub liked: bool,
+    /// Set briefly after a like/unlike request fails, to flag it didn't take.
+    pub like_failed: bool,
     pub show_controls: bool,
     pub show_controls_hint: bool,
     pub queue_status: Option<String>,
@@ -133,6 +135,9 @@ pub fn render(frame: &mut Frame, state: &PanelState) {
     ];
     if state.liked {
         title_line.push(Span::styled("  ♥", title_style));
+    }
+    if state.like_failed {
+        title_line.push(Span::styled("  ✗ like failed", dim));
     }
     right.push(Line::from(title_line));
     right.push(Line::from(Span::styled(state.artist_name.to_string(), dim)));

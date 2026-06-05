@@ -723,9 +723,12 @@ fn play(
     // unlike. Updated optimistically and reverted if the network request fails.
     // `like_inflight` allows only one toggle at a time: rapid presses are dropped
     // until it resolves, so a like/unlike pair can't complete out of order and
-    // leave the server disagreeing with the heart.
+    // leave the server disagreeing with the heart. On failure the optimistic
+    // flip is reverted *and* `like_flash` is set so the UI briefly shows the
+    // toggle didn't take, rather than silently snapping back.
     let liked = Arc::new(AtomicBool::new(already_liked));
     let like_inflight = Arc::new(AtomicBool::new(false));
+    let like_flash: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
 
     let drop_times: Arc<Mutex<Vec<f64>>> = Arc::new(Mutex::new(Vec::new()));
     let beat_times: Arc<Mutex<Vec<f64>>> = Arc::new(Mutex::new(Vec::new()));
@@ -969,6 +972,16 @@ fn play(
         let dl_b = dl_bytes.load(Ordering::Relaxed);
         let dl_t = dl_total.load(Ordering::Relaxed);
 
+        // Like-failure flash: active until its deadline, then auto-clears.
+        let like_failed = {
+            let mut f = like_flash.lock().unwrap_or_else(|e| e.into_inner());
+            match *f {
+                Some(deadline) if Instant::now() < deadline => true,
+                Some(_) => { *f = None; false }
+                None => false,
+            }
+        };
+
         // Build visualisation lines
         let spec = spec_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let vis = panel::build_vis_lines(
@@ -993,6 +1006,7 @@ fn play(
             vis_lines: &vis,
             is_local,
             liked: liked.load(Ordering::Relaxed),
+            like_failed,
             show_controls,
             show_controls_hint: cfg.show_controls_hint,
             queue_status,
@@ -1063,6 +1077,7 @@ fn play(
                                     liked.store(now_liked, Ordering::Relaxed); // optimistic
                                     let liked_flag = liked.clone();
                                     let inflight_flag = like_inflight.clone();
+                                    let flash_flag = like_flash.clone();
                                     let tid = track.id;
                                     thread::spawn(move || {
                                         let res = if now_liked {
@@ -1072,6 +1087,8 @@ fn play(
                                         };
                                         if res.is_err() {
                                             liked_flag.store(!now_liked, Ordering::Relaxed);
+                                            *flash_flag.lock().unwrap_or_else(|e| e.into_inner()) =
+                                                Some(Instant::now() + Duration::from_secs(2));
                                         }
                                         inflight_flag.store(false, Ordering::Relaxed);
                                     });
