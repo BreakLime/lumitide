@@ -25,6 +25,8 @@ pub struct PanelState<'a> {
     /// Pre-rendered spectrum or download-progress lines (BAR_HEIGHT rows).
     pub vis_lines: &'a [Line<'static>],
     pub is_local: bool,
+    /// Whether the current track is a Tidal favorite (shows a heart by the title).
+    pub liked: bool,
     pub show_controls: bool,
     pub show_controls_hint: bool,
     pub queue_status: Option<String>,
@@ -84,7 +86,7 @@ pub fn render(frame: &mut Frame, state: &PanelState) {
         let hint_text = if state.is_local {
             "← prev  Spc pause  → next  ↑↓ vol  q/Esc quit"
         } else {
-            "← prev  Spc pause  → next  ↑↓ vol  d download  r radio  q/Esc quit"
+            "← prev  Spc pause  → next  ↑↓ vol  d download  L like  r radio  q/Esc quit"
         };
         let controls = Title::from(Line::styled(hint_text, dim))
             .alignment(Alignment::Center);
@@ -126,7 +128,13 @@ pub fn render(frame: &mut Frame, state: &PanelState) {
     let mut right: Vec<Line<'static>> = Vec::new();
 
     right.push(Line::raw(""));
-    right.push(Line::from(Span::styled(state.track_name.to_string(), title_style)));
+    let mut title_line: Vec<Span<'static>> = vec![
+        Span::styled(state.track_name.to_string(), title_style),
+    ];
+    if state.liked {
+        title_line.push(Span::styled("  ♥", title_style));
+    }
+    right.push(Line::from(title_line));
     right.push(Line::from(Span::styled(state.artist_name.to_string(), dim)));
     right.push(Line::from(Span::styled(state.album_name.to_string(), dim)));
     if let Some(label) = state.track_label {

@@ -137,6 +137,7 @@ impl From<RawTrack> for TrackInfo {
 
 // ─── Client ───────────────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct TidalClient {
     pub session: Session,
     client: reqwest::blocking::Client,
@@ -165,6 +166,68 @@ impl TidalClient {
             return Err(anyhow!("API error {} on {}: {}", status, path, body));
         }
         Ok(resp)
+    }
+
+    fn post_form(
+        &self,
+        path: &str,
+        params: &[(&str, &str)],
+        form: &[(&str, &str)],
+    ) -> Result<reqwest::blocking::Response> {
+        let url = format!("{}/{}", API_BASE, path);
+        let mut req = self.client.post(&url)
+            .header("Authorization", self.session.auth_header());
+        for &(k, v) in params {
+            req = req.query(&[(k, v)]);
+        }
+        let resp = req.form(form).send()?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(anyhow!("API error {} on {}: {}", status, path, body));
+        }
+        Ok(resp)
+    }
+
+    fn delete(&self, path: &str, params: &[(&str, &str)]) -> Result<reqwest::blocking::Response> {
+        let url = format!("{}/{}", API_BASE, path);
+        let mut req = self.client.delete(&url)
+            .header("Authorization", self.session.auth_header());
+        for &(k, v) in params {
+            req = req.query(&[(k, v)]);
+        }
+        let resp = req.send()?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(anyhow!("API error {} on {}: {}", status, path, body));
+        }
+        Ok(resp)
+    }
+
+    // ── Favorites (like / unlike) ──────────────────────────────────────────────
+
+    /// Add a track to the user's favorites — the same action as tapping the
+    /// heart button in the Tidal app. POSTs to the favorites collection the
+    /// `liked_tracks_page` reader pulls from. Idempotent: re-liking an already
+    /// favorited track succeeds. Requires the `w_usr` scope (already granted).
+    pub fn like_track(&self, track_id: u64) -> Result<()> {
+        let track_id_s = track_id.to_string();
+        self.post_form(
+            &format!("users/{}/favorites/tracks", self.session.user_id),
+            &[("countryCode", &self.session.country_code)],
+            &[("trackIds", &track_id_s), ("onArtifactNotFound", "FAIL")],
+        )?;
+        Ok(())
+    }
+
+    /// Remove a track from the user's favorites ("unlike").
+    pub fn unlike_track(&self, track_id: u64) -> Result<()> {
+        self.delete(
+            &format!("users/{}/favorites/tracks/{}", self.session.user_id, track_id),
+            &[("countryCode", &self.session.country_code)],
+        )?;
+        Ok(())
     }
 
     // ── Track ────────────────────────────────────────────────────────────────

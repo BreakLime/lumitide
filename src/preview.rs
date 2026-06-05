@@ -533,6 +533,7 @@ pub fn run(
         volume,
         false,
         already_saved,
+        Some(client.clone()),
     )?;
 
     download_done.store(true, Ordering::Relaxed); // signal dl thread to stop
@@ -569,6 +570,7 @@ pub fn run_local(
         volume,
         true,
         false,
+        None, // local files can't be liked on Tidal
     )
 }
 
@@ -647,6 +649,7 @@ fn play(
     volume: Arc<Mutex<f32>>,
     is_local: bool,
     already_saved: bool,
+    like_client: Option<TidalClient>,
 ) -> Result<String> {
     let cfg = config::load();
 
@@ -707,6 +710,11 @@ fn play(
         if already_saved { "✓ Saved".to_string() } else { String::new() }
     ));
     let dl_flash_until: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+
+    // ── Like state ────────────────────────────────────────────────────────────
+    // Local toggle: 'L' adds the track to Tidal favorites, 'L' again removes it.
+    // Updated optimistically and reverted if the network request fails.
+    let liked = Arc::new(AtomicBool::new(false));
 
     let drop_times: Arc<Mutex<Vec<f64>>> = Arc::new(Mutex::new(Vec::new()));
     let beat_times: Arc<Mutex<Vec<f64>>> = Arc::new(Mutex::new(Vec::new()));
@@ -973,6 +981,7 @@ fn play(
             bar_color,
             vis_lines: &vis,
             is_local,
+            liked: liked.load(Ordering::Relaxed),
             show_controls,
             show_controls_hint: cfg.show_controls_hint,
             queue_status,
@@ -1028,6 +1037,28 @@ fn play(
                         }
                         KeyCode::Char('?') => {
                             show_controls = !show_controls;
+                        }
+                        KeyCode::Char('l') | KeyCode::Char('L') => {
+                            // Toggle the favorite on Tidal. No-op for local files
+                            // (no client). Network call runs off the UI thread so
+                            // the visualizer keeps animating; state is reverted if
+                            // the request fails.
+                            if let Some(c) = like_client.clone() {
+                                let now_liked = !liked.load(Ordering::Relaxed);
+                                liked.store(now_liked, Ordering::Relaxed); // optimistic
+                                let liked_flag = liked.clone();
+                                let tid = track.id;
+                                thread::spawn(move || {
+                                    let res = if now_liked {
+                                        c.like_track(tid)
+                                    } else {
+                                        c.unlike_track(tid)
+                                    };
+                                    if res.is_err() {
+                                        liked_flag.store(!now_liked, Ordering::Relaxed);
+                                    }
+                                });
+                            }
                         }
                         KeyCode::Char('d') | KeyCode::Char('D') => {
                             if already_saved || is_local {
