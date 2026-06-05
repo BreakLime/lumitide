@@ -2,10 +2,12 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, block::Title},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap, block::Title},
     Frame,
 };
 
+use crate::api::{ArtistDetail, Credit, TrackInfo};
+use crate::cover::CoverArt;
 use crate::spectrum;
 use crate::utils::fmt_time;
 
@@ -82,9 +84,9 @@ pub fn render(frame: &mut Frame, state: &PanelState) {
         let area = Rect::new(x, y, block_w.min(terminal.width), block_h.min(terminal.height));
 
         let hint_text = if state.is_local {
-            "← prev  Spc pause  → next  ↑↓ vol  q/Esc quit"
+            "← prev  Spc pause  → next  ↑↓ vol  i info  a artist  q/Esc quit"
         } else {
-            "← prev  Spc pause  → next  ↑↓ vol  d download  r radio  q/Esc quit"
+            "← prev  Spc pause  → next  ↑↓ vol  d download  r radio  i info  a artist  q/Esc quit"
         };
         let controls = Title::from(Line::styled(hint_text, dim))
             .alignment(Alignment::Center);
@@ -204,5 +206,213 @@ pub fn build_vis_lines(
             spectrum::compute_spectrum(spec_buf, band_edges)
         };
         spectrum::render_spectrum(&normalized, bar_peaks, bar_peak_hold, bar_color)
+    }
+}
+
+// ─── Info popups ───────────────────────────────────────────────────────────────
+
+fn accent_style(accent: Option<(u8, u8, u8)>) -> Style {
+    match accent {
+        Some((r, g, b)) => Style::new().fg(Color::Rgb(r, g, b)),
+        None => Style::new().fg(Color::White),
+    }
+}
+
+/// A "Label  value" line for the info popups.
+fn field(label: &str, value: String, accent: Option<(u8, u8, u8)>) -> Line<'static> {
+    let dim = Style::new().fg(Color::DarkGray);
+    Line::from(vec![
+        Span::styled(format!("{:<11}", label), dim),
+        Span::styled(value, accent_style(accent)),
+    ])
+}
+
+/// Build the body lines for the track-info popup.
+pub fn build_track_info_lines(
+    track: &TrackInfo,
+    credits: Option<&Vec<Credit>>,
+    accent: Option<(u8, u8, u8)>,
+) -> Vec<Line<'static>> {
+    let dim = Style::new().fg(Color::DarkGray);
+    let bold_accent = accent_style(accent).add_modifier(Modifier::BOLD);
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    // Title (+ version + explicit marker)
+    let mut title_spans = vec![Span::styled(track.title.clone(), bold_accent)];
+    if let Some(v) = &track.version {
+        if !v.is_empty() {
+            title_spans.push(Span::styled(format!("  ({v})"), dim));
+        }
+    }
+    if track.explicit {
+        title_spans.push(Span::styled("  [E]", dim));
+    }
+    lines.push(Line::from(title_spans));
+    lines.push(Line::raw(""));
+
+    let artists = if track.artists.is_empty() {
+        track.artist_name.clone()
+    } else {
+        track.artists.join(", ")
+    };
+    lines.push(field("Artists", artists, accent));
+
+    let mut album = track.album_name.clone();
+    if let Some(y) = track.album_release_year {
+        album.push_str(&format!(" ({y})"));
+    }
+    lines.push(field("Album", album, accent));
+    lines.push(field("Track", format!("{} · disc {}", track.track_num, track.volume_num), accent));
+    lines.push(field("Duration", fmt_time(track.duration as f64), accent));
+    lines.push(field("Quality", track.audio_quality.clone(), accent));
+    if let Some(p) = track.popularity {
+        lines.push(field("Popularity", format!("{p}"), accent));
+    }
+    if let Some(isrc) = &track.isrc {
+        lines.push(field("ISRC", isrc.clone(), accent));
+    }
+    if let Some(c) = &track.album_copyright {
+        lines.push(field("©", c.clone(), accent));
+    }
+
+    // ── Credits ──────────────────────────────────────────────────────────────
+    lines.push(Line::raw(""));
+    match credits {
+        None => lines.push(Line::from(Span::styled("Loading credits…", dim))),
+        Some(c) if c.is_empty() => {
+            lines.push(Line::from(Span::styled("No credits available", dim)));
+        }
+        Some(c) => {
+            lines.push(Line::from(Span::styled("Credits", bold_accent)));
+            for credit in c {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{:<11}", credit.role), dim),
+                    Span::styled(credit.names.join(", "), Style::new().fg(Color::Gray)),
+                ]));
+            }
+        }
+    }
+
+    lines
+}
+
+/// Compute a centred rect for a popup of the given inner content size.
+fn centered(area: Rect, inner_w: u16, inner_h: u16) -> Rect {
+    let box_w = (inner_w + 2).min(area.width);
+    let box_h = (inner_h + 2).min(area.height);
+    let x = area.x + area.width.saturating_sub(box_w) / 2;
+    let y = area.y + area.height.saturating_sub(box_h) / 2;
+    Rect::new(x, y, box_w, box_h)
+}
+
+/// Render a bordered, centred text popup over the current frame.
+pub fn render_info_popup(
+    frame: &mut Frame,
+    title: &str,
+    lines: Vec<Line<'static>>,
+    accent: Option<(u8, u8, u8)>,
+) {
+    let area = frame.area();
+    let content_w = lines.iter().map(|l| l.width()).max().unwrap_or(24) as u16;
+    let inner_w = content_w.clamp(28, area.width.saturating_sub(4).max(28));
+    let inner_h = (lines.len() as u16).min(area.height.saturating_sub(2));
+    let rect = centered(area, inner_w + 1, inner_h); // +1 for left padding
+
+    let border = accent_style(accent);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border)
+        .title(Title::from(Span::styled(
+            format!(" {title} "),
+            border.add_modifier(Modifier::BOLD),
+        )).alignment(Alignment::Center));
+    let inner = block.inner(rect);
+
+    frame.render_widget(Clear, rect);
+    frame.render_widget(block, rect);
+    // Pad one column on the left
+    let text_area = Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(1), inner.height);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+        text_area,
+    );
+}
+
+/// Render the artist-info popup: pixelated picture on the left, name +
+/// popularity + biography on the right.
+pub fn render_artist_popup(
+    frame: &mut Frame,
+    fallback_name: &str,
+    detail: Option<&ArtistDetail>,
+    art: Option<&CoverArt>,
+    accent: Option<(u8, u8, u8)>,
+) {
+    let area = frame.area();
+    let dim = Style::new().fg(Color::DarkGray);
+    let bold_accent = accent_style(accent).add_modifier(Modifier::BOLD);
+
+    // ── Right-hand text ────────────────────────────────────────────────────────
+    let name = detail.map(|d| d.name.clone()).unwrap_or_else(|| fallback_name.to_string());
+    let mut info: Vec<Line<'static>> = vec![
+        Line::from(Span::styled(name, bold_accent)),
+    ];
+    if let Some(d) = detail {
+        if let Some(p) = d.popularity {
+            info.push(Line::from(Span::styled(format!("Popularity {p}"), dim)));
+        }
+        info.push(Line::raw(""));
+        match &d.bio {
+            Some(b) if !b.is_empty() => {
+                info.push(Line::from(Span::styled(b.clone(), Style::new().fg(Color::Gray))));
+            }
+            _ => info.push(Line::from(Span::styled("No biography available", dim))),
+        }
+    } else {
+        info.push(Line::raw(""));
+        info.push(Line::from(Span::styled("Loading artist…", dim)));
+    }
+
+    // ── Geometry ───────────────────────────────────────────────────────────────
+    let cover_lines: &[Line<'static>] = art.map(|a| a.color.as_slice()).unwrap_or(&[]);
+    let cover_w = cover_lines.first().map(|l| l.width()).unwrap_or(0) as u16;
+    let pic_col = if cover_w > 0 { cover_w + 2 } else { 0 };
+    let info_col: u16 = 46;
+    let inner_w = pic_col + info_col;
+    let inner_h = (cover_lines.len() as u16).max(16);
+    let rect = centered(area, inner_w, inner_h);
+
+    let border = accent_style(accent);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border)
+        .title(Title::from(Span::styled(
+            " Artist ",
+            border.add_modifier(Modifier::BOLD),
+        )).alignment(Alignment::Center));
+    let inner = block.inner(rect);
+
+    frame.render_widget(Clear, rect);
+    frame.render_widget(block, rect);
+
+    if pic_col > 0 {
+        let cols = Layout::horizontal([
+            Constraint::Length(pic_col),
+            Constraint::Min(0),
+        ])
+        .split(inner);
+        frame.render_widget(
+            Paragraph::new(Text::from(cover_lines.to_vec())),
+            cols[0],
+        );
+        frame.render_widget(
+            Paragraph::new(Text::from(info)).wrap(Wrap { trim: true }),
+            cols[1],
+        );
+    } else {
+        let text_area = Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(1), inner.height);
+        frame.render_widget(
+            Paragraph::new(Text::from(info)).wrap(Wrap { trim: true }),
+            text_area,
+        );
     }
 }

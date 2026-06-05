@@ -205,6 +205,7 @@ mod tests {
             id,
             title: title.to_string(),
             artist_name: artist.to_string(),
+            artist_id: None,
             album_name: String::new(),
             album_cover: None,
             album_artist: String::new(),
@@ -216,6 +217,9 @@ mod tests {
             isrc: None,
             audio_quality: "LOSSLESS".to_string(),
             duration: 240,
+            version: None,
+            explicit: false,
+            popularity: None,
         }
     }
 

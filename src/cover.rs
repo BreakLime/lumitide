@@ -27,6 +27,7 @@ const BRAILLE_DOTS: [(usize, usize, u32); 8] = [
 ];
 
 /// Rendered cover: two Text representations + 3-colour palette.
+#[derive(Clone)]
 pub struct CoverArt {
     /// White Braille art (normal/no-colour mode).
     pub mono: Vec<Line<'static>>,

@@ -15,7 +15,7 @@ Stream audio from your Tidal account directly in the terminal, with album art, a
 
 ![Lumitide demo](assets/demo.gif)
 
-**Playback:** `→/n` next &nbsp;`←/p` prev &nbsp;`Space` pause &nbsp;`↑/+` vol up &nbsp;`↓/-` vol down &nbsp;`d` download &nbsp;`r` radio &nbsp;`?` controls &nbsp;`q/Esc` back
+**Playback:** `→/n` next &nbsp;`←/p` prev &nbsp;`Space` pause &nbsp;`↑/+` vol up &nbsp;`↓/-` vol down &nbsp;`d` download &nbsp;`r` radio &nbsp;`i` info &nbsp;`a` artist &nbsp;`?` controls &nbsp;`q/Esc` back
 
 **Lists:** `↑↓` / `jk` navigate &nbsp;`Enter` play &nbsp;`d` queue for download &nbsp;`Esc/q` back
 
@@ -174,8 +174,10 @@ lumitide config                        # open the config file in your editor
 | `↓` / `-` | Volume down |
 | `d` | Download current track to disk |
 | `r` | Start radio from current track |
+| `i` | Toggle track info (year, quality, ISRC, credits…) |
+| `a` | Toggle artist info (picture + biography) |
 | `?` | Toggle controls overlay |
-| `q` / `Esc` | Go back |
+| `q` / `Esc` | Close popup, else quit |
 
 ### In list views (library, search, mixes, playlists)
 

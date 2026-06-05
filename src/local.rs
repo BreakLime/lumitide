@@ -174,6 +174,7 @@ fn fallback_track_info(path: &std::path::Path) -> TrackInfo {
         id: 0,
         title,
         artist_name: "Unknown".to_string(),
+        artist_id: None,
         album_name: String::new(),
         album_cover: None,
         album_artist: String::new(),
@@ -185,6 +186,9 @@ fn fallback_track_info(path: &std::path::Path) -> TrackInfo {
         isrc: None,
         audio_quality: "AUDIO".to_string(),
         duration: 0,
+        version: None,
+        explicit: false,
+        popularity: None,
     }
 }
 
@@ -229,6 +233,7 @@ fn read_local_metadata(path: &std::path::Path) -> (TrackInfo, Option<Vec<u8>>) {
         id: 0,
         title,
         artist_name,
+        artist_id: None,
         album_name,
         album_cover: None,
         album_artist: String::new(),
@@ -240,6 +245,9 @@ fn read_local_metadata(path: &std::path::Path) -> (TrackInfo, Option<Vec<u8>>) {
         isrc: None,
         audio_quality: fmt,
         duration: 0,
+        version: None,
+        explicit: false,
+        popularity: None,
     };
     (track, cover_bytes)
 }

@@ -28,10 +28,11 @@ use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-use crate::api::{TidalClient, TrackInfo};
+use crate::api::{ArtistDetail, Credit, TidalClient, TrackInfo};
+use crate::auth::Session;
 use crate::color_state::{self, ColorState};
 use crate::config;
-use crate::cover::{render_cover, render_placeholder, ART_CHARS};
+use crate::cover::{render_cover, render_placeholder, CoverArt, ART_CHARS};
 use crate::panel::{self, PanelState};
 use crate::spectrum::{self, FFT_SIZE, NUM_BARS};
 
@@ -533,6 +534,7 @@ pub fn run(
         volume,
         false,
         already_saved,
+        Some(client.session.clone()),
     )?;
 
     download_done.store(true, Ordering::Relaxed); // signal dl thread to stop
@@ -569,6 +571,7 @@ pub fn run_local(
         volume,
         true,
         false,
+        None,
     )
 }
 
@@ -647,6 +650,7 @@ fn play(
     volume: Arc<Mutex<f32>>,
     is_local: bool,
     already_saved: bool,
+    session: Option<Session>,
 ) -> Result<String> {
     let cfg = config::load();
 
@@ -909,6 +913,15 @@ fn play(
     let mut beat_idx: usize = 0;
     let band_edges = spectrum::compute_band_edges(sample_rate);
 
+    // ── Info popups (lazily fetched in the background on first open) ───────────
+    let mut show_track_info = false;
+    let mut show_artist_info = false;
+    let credits: Arc<Mutex<Option<Vec<Credit>>>> = Arc::new(Mutex::new(None));
+    let credits_started = Arc::new(AtomicBool::new(false));
+    let artist_detail: Arc<Mutex<Option<ArtistDetail>>> = Arc::new(Mutex::new(None));
+    let artist_art: Arc<Mutex<Option<CoverArt>>> = Arc::new(Mutex::new(None));
+    let artist_started = Arc::new(AtomicBool::new(false));
+
     let result_str = loop {
         let elapsed_secs = current_sample.load(Ordering::Relaxed) as f64 / sample_rate as f64;
         let total_secs = if total_frames > 0 { total_frames as f64 / sample_rate as f64 } else { 0.0 };
@@ -978,7 +991,37 @@ fn play(
             queue_status,
         };
 
-        terminal.draw(|f| panel::render(f, &panel_state))?;
+        // Snapshot lazily-fetched popup data before the draw closure
+        let credits_snap = if show_track_info {
+            Some(credits.lock().unwrap_or_else(|e| e.into_inner()).clone())
+        } else {
+            None
+        };
+        let (artist_snap, artist_art_snap) = if show_artist_info {
+            (
+                artist_detail.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+                artist_art.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            )
+        } else {
+            (None, None)
+        };
+
+        terminal.draw(|f| {
+            panel::render(f, &panel_state);
+            if show_track_info {
+                let credits_ref = credits_snap.as_ref().and_then(|c| c.as_ref());
+                let lines = panel::build_track_info_lines(track, credits_ref, bar_color);
+                panel::render_info_popup(f, "Track Info", lines, bar_color);
+            } else if show_artist_info {
+                panel::render_artist_popup(
+                    f,
+                    &track.artist_name,
+                    artist_snap.as_ref(),
+                    artist_art_snap.as_ref(),
+                    bar_color,
+                );
+            }
+        })?;
 
         // ── Keyboard ─────────────────────────────────────────────────────────
         if event::poll(Duration::from_millis(90))? {
@@ -986,8 +1029,14 @@ fn play(
                 if key.kind == KeyEventKind::Press {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
-                            stop_all.store(true, Ordering::Relaxed);
-                            break "quit".to_string();
+                            if show_track_info || show_artist_info {
+                                // First close any open info popup
+                                show_track_info = false;
+                                show_artist_info = false;
+                            } else {
+                                stop_all.store(true, Ordering::Relaxed);
+                                break "quit".to_string();
+                            }
                         }
                         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Right => {
                             stop_all.store(true, Ordering::Relaxed);
@@ -1028,6 +1077,57 @@ fn play(
                         }
                         KeyCode::Char('?') => {
                             show_controls = !show_controls;
+                        }
+                        KeyCode::Char('i') | KeyCode::Char('I') => {
+                            show_artist_info = false;
+                            show_track_info = !show_track_info;
+                            // Lazily fetch credits the first time the popup opens
+                            if show_track_info && !credits_started.swap(true, Ordering::Relaxed) {
+                                match &session {
+                                    Some(sess) if !is_local => {
+                                        let sess = sess.clone();
+                                        let credits = credits.clone();
+                                        let tid = track.id;
+                                        thread::spawn(move || {
+                                            let client = TidalClient::new(sess);
+                                            let result = client.track_credits(tid).unwrap_or_default();
+                                            *credits.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
+                                        });
+                                    }
+                                    // No session (local file) — nothing to fetch
+                                    _ => *credits.lock().unwrap_or_else(|e| e.into_inner()) = Some(Vec::new()),
+                                }
+                            }
+                        }
+                        KeyCode::Char('a') | KeyCode::Char('A') => {
+                            show_track_info = false;
+                            show_artist_info = !show_artist_info;
+                            // Lazily fetch artist detail + picture the first time
+                            if show_artist_info && !artist_started.swap(true, Ordering::Relaxed) {
+                                match (&session, track.artist_id) {
+                                    (Some(sess), Some(aid)) => {
+                                        let sess = sess.clone();
+                                        let artist_detail = artist_detail.clone();
+                                        let artist_art = artist_art.clone();
+                                        thread::spawn(move || {
+                                            let client = TidalClient::new(sess);
+                                            let detail = client.artist_detail(aid).unwrap_or_default();
+                                            if let Some(pic) = &detail.picture {
+                                                if let Ok(bytes) = client.fetch_cover(pic, 320) {
+                                                    let art = render_cover(&bytes, ART_CHARS);
+                                                    *artist_art.lock().unwrap_or_else(|e| e.into_inner()) = Some(art);
+                                                }
+                                            }
+                                            *artist_detail.lock().unwrap_or_else(|e| e.into_inner()) = Some(detail);
+                                        });
+                                    }
+                                    // No session / unknown artist — show what we already have
+                                    _ => {
+                                        *artist_detail.lock().unwrap_or_else(|e| e.into_inner()) =
+                                            Some(ArtistDetail { name: track.artist_name.clone(), ..Default::default() });
+                                    }
+                                }
+                            }
                         }
                         KeyCode::Char('d') | KeyCode::Char('D') => {
                             if already_saved || is_local {

@@ -27,6 +27,7 @@ pub struct TrackInfo {
     pub id: u64,
     pub title: String,
     pub artist_name: String,
+    pub artist_id: Option<u64>, // primary artist, for fetching artist details
     pub album_name: String,
     pub album_cover: Option<String>, // UUID like "ab-cd-ef-gh"
     pub album_artist: String,
@@ -37,13 +38,36 @@ pub struct TrackInfo {
     pub volume_num: u32,
     pub isrc: Option<String>,
     pub audio_quality: String, // e.g. "LOSSLESS", "FLAC", "MP3"
-    pub duration: u64,         // seconds; stored for future display
+    pub duration: u64,         // seconds
+    pub version: Option<String>, // e.g. "Remastered", "Radio Edit"
+    pub explicit: bool,
+    pub popularity: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // picture stored for future artist art display
 pub struct ArtistInfo {
     pub id: u64,
     pub name: String,
+    pub picture: Option<String>, // UUID like "ab-cd-ef-gh"
+}
+
+/// A single credit role (e.g. "Producer") with its contributor names.
+#[derive(Debug, Clone)]
+pub struct Credit {
+    pub role: String,
+    pub names: Vec<String>,
+}
+
+/// Extended artist details: picture, popularity and biography.
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+pub struct ArtistDetail {
+    pub id: u64,
+    pub name: String,
+    pub picture: Option<String>,
+    pub popularity: Option<u32>,
+    pub bio: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +97,8 @@ pub struct AlbumInfo {
 struct RawArtist {
     id: u64,
     name: String,
+    #[serde(default)]
+    picture: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -102,6 +128,10 @@ struct RawTrack {
     artists: Option<Vec<RawArtist>>,
     album: RawAlbum,
     copyright: Option<String>,
+    version: Option<String>,
+    #[serde(default)]
+    explicit: bool,
+    popularity: Option<u32>,
 }
 
 impl From<RawTrack> for TrackInfo {
@@ -115,11 +145,16 @@ impl From<RawTrack> for TrackInfo {
             .map(|a| a.name.clone())
             .or_else(|| r.artists.as_ref().and_then(|v| v.first()).map(|a| a.name.clone()))
             .unwrap_or_default();
+        let artist_id = r.artist
+            .as_ref()
+            .map(|a| a.id)
+            .or_else(|| r.artists.as_ref().and_then(|v| v.first()).map(|a| a.id));
         let copyright = r.copyright.or(r.album.copyright);
         TrackInfo {
             id:                  r.id,
             title:               r.title,
             artist_name:         primary_artist.clone(),
+            artist_id,
             album_name:          r.album.title,
             album_cover:         r.album.cover,
             album_artist:        r.album.artist.map(|a| a.name).unwrap_or(primary_artist),
@@ -131,6 +166,9 @@ impl From<RawTrack> for TrackInfo {
             isrc:                r.isrc,
             audio_quality:       r.audio_quality.unwrap_or_else(|| "UNKNOWN".to_string()),
             duration:            r.duration.unwrap_or(0),
+            version:             r.version,
+            explicit:            r.explicit,
+            popularity:          r.popularity,
         }
     }
 }
@@ -282,7 +320,7 @@ impl TidalClient {
         ])?;
         let data: SearchResp = resp.json()?;
         Ok(data.artists.map(|a| a.items.into_iter()
-            .map(|r| ArtistInfo { id: r.id, name: r.name })
+            .map(|r| ArtistInfo { id: r.id, name: r.name, picture: r.picture })
             .collect())
             .unwrap_or_default())
     }
@@ -523,8 +561,89 @@ impl TidalClient {
         )?;
         let data: Resp = resp.json()?;
         let total = data.total.unwrap_or(0);
-        let artists = data.items.into_iter().map(|f| ArtistInfo { id: f.item.id, name: f.item.name }).collect();
+        let artists = data.items.into_iter().map(|f| ArtistInfo { id: f.item.id, name: f.item.name, picture: f.item.picture }).collect();
         Ok((artists, total))
+    }
+
+    // ── Credits & extended metadata ────────────────────────────────────────────
+
+    /// Fetch per-track credits (producers, composers, engineers, …).
+    pub fn track_credits(&self, track_id: u64) -> Result<Vec<Credit>> {
+        #[derive(Deserialize)]
+        struct RawCredit {
+            #[serde(rename = "type")]
+            role: String,
+            #[serde(default)]
+            contributors: Vec<RawContributor>,
+        }
+        #[derive(Deserialize)]
+        struct RawContributor {
+            name: String,
+        }
+
+        let resp = self.get(
+            &format!("tracks/{}/credits", track_id),
+            &[
+                ("countryCode", &self.session.country_code),
+                ("includeContributors", "true"),
+            ],
+        )?;
+        let raw: Vec<RawCredit> = resp.json()?;
+        Ok(raw.into_iter()
+            .map(|c| Credit {
+                role: c.role,
+                names: c.contributors.into_iter().map(|x| x.name).collect(),
+            })
+            .filter(|c| !c.names.is_empty())
+            .collect())
+    }
+
+    /// Fetch extended artist details (picture, popularity) and biography.
+    pub fn artist_detail(&self, artist_id: u64) -> Result<ArtistDetail> {
+        #[derive(Deserialize)]
+        struct Raw {
+            id: u64,
+            name: String,
+            #[serde(default)]
+            picture: Option<String>,
+            #[serde(default)]
+            popularity: Option<u32>,
+        }
+        let resp = self.get(
+            &format!("artists/{}", artist_id),
+            &[("countryCode", &self.session.country_code)],
+        )?;
+        let r: Raw = resp.json()?;
+        Ok(ArtistDetail {
+            id: r.id,
+            name: r.name,
+            picture: r.picture,
+            popularity: r.popularity,
+            bio: self.artist_bio(artist_id).unwrap_or(None),
+        })
+    }
+
+    /// Fetch an artist biography. Returns `None` when no bio is available
+    /// (Tidal answers 404 for artists without an editorial bio).
+    pub fn artist_bio(&self, artist_id: u64) -> Result<Option<String>> {
+        #[derive(Deserialize)]
+        struct Raw {
+            #[serde(default)]
+            text: Option<String>,
+            #[serde(default)]
+            summary: Option<String>,
+        }
+        match self.get(
+            &format!("artists/{}/bio", artist_id),
+            &[("countryCode", &self.session.country_code)],
+        ) {
+            Ok(resp) => {
+                let r: Raw = resp.json()?;
+                Ok(r.text.or(r.summary).map(|s| clean_bio(&s)))
+            }
+            // No bio for this artist — not a hard error.
+            Err(_) => Ok(None),
+        }
     }
 
     // ── Cover image ──────────────────────────────────────────────────────────
@@ -577,6 +696,23 @@ fn decrypt_security_token(key_id: &str) -> Result<EncryptionInfo> {
     key.copy_from_slice(&buf[..16]);
     nonce.copy_from_slice(&buf[16..24]);
     Ok(EncryptionInfo { key, nonce })
+}
+
+/// Strip Tidal's `[wimpLink …]…[/wimpLink]` markup from a biography, keeping
+/// the human-readable link text (e.g. the linked artist/album name).
+fn clean_bio(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("[wimpLink") {
+        out.push_str(&rest[..start]);
+        // Skip past the opening tag's closing ']'
+        match rest[start..].find(']') {
+            Some(close) => rest = &rest[start + close + 1..],
+            None => { rest = ""; break; }
+        }
+    }
+    out.push_str(rest);
+    out.replace("[/wimpLink]", "").trim().to_string()
 }
 
 #[cfg(test)]
@@ -795,5 +931,44 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn artist_id_captured_from_artist_field() {
+        let t = parse(r#"{"id":1,"title":"Song","artist":{"id":77,"name":"Main"},"album":{"id":100,"title":"Album"}}"#);
+        assert_eq!(t.artist_id, Some(77));
+    }
+
+    #[test]
+    fn artist_id_falls_back_to_artists_array() {
+        let t = parse(r#"{"id":1,"title":"Song","artists":[{"id":88,"name":"First"}],"album":{"id":100,"title":"Album"}}"#);
+        assert_eq!(t.artist_id, Some(88));
+    }
+
+    #[test]
+    fn extended_fields_parsed() {
+        let t = parse(r#"{"id":1,"title":"Song","version":"Remastered","explicit":true,"popularity":63,"album":{"id":100,"title":"Album"}}"#);
+        assert_eq!(t.version, Some("Remastered".to_string()));
+        assert!(t.explicit);
+        assert_eq!(t.popularity, Some(63));
+    }
+
+    #[test]
+    fn extended_fields_default_when_absent() {
+        let t = parse(r#"{"id":1,"title":"Song","album":{"id":100,"title":"Album"}}"#);
+        assert!(t.version.is_none());
+        assert!(!t.explicit);
+        assert!(t.popularity.is_none());
+    }
+
+    #[test]
+    fn clean_bio_strips_wimplink_markup() {
+        let raw = r#"Born in 1980, [wimpLink artistId="123"]John Doe[/wimpLink] is a producer."#;
+        assert_eq!(clean_bio(raw), "Born in 1980, John Doe is a producer.");
+    }
+
+    #[test]
+    fn clean_bio_handles_plain_text() {
+        assert_eq!(clean_bio("  Just a normal bio.  "), "Just a normal bio.");
     }
 }
