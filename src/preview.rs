@@ -1009,7 +1009,7 @@ fn play(
         terminal.draw(|f| {
             panel::render(f, &panel_state);
             if show_track_info {
-                let credits_ref = credits_snap.as_ref().and_then(|c| c.as_ref());
+                let credits_ref = credits_snap.as_ref().and_then(|c| c.as_deref());
                 let lines = panel::build_track_info_lines(track, credits_ref, bar_color);
                 panel::render_info_popup(f, "Track Info", lines, bar_color);
             } else if show_artist_info {
@@ -1109,9 +1109,14 @@ fn play(
                                         let sess = sess.clone();
                                         let artist_detail = artist_detail.clone();
                                         let artist_art = artist_art.clone();
+                                        let fallback_name = track.artist_name.clone();
                                         thread::spawn(move || {
                                             let client = TidalClient::new(sess);
-                                            let detail = client.artist_detail(aid).unwrap_or_default();
+                                            // On failure keep the known artist name so the popup
+                                            // header stays meaningful rather than going blank.
+                                            let detail = client.artist_detail(aid).unwrap_or_else(|_| {
+                                                ArtistDetail { name: fallback_name, ..Default::default() }
+                                            });
                                             if let Some(pic) = &detail.picture {
                                                 if let Ok(bytes) = client.fetch_cover(pic, 320) {
                                                     let art = render_cover(&bytes, ART_CHARS);

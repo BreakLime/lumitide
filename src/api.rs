@@ -623,8 +623,10 @@ impl TidalClient {
         })
     }
 
-    /// Fetch an artist biography. Returns `None` when no bio is available
-    /// (Tidal answers 404 for artists without an editorial bio).
+    /// Fetch an artist biography. Returns `None` when no bio is available —
+    /// Tidal answers 404 for artists without an editorial bio, but for
+    /// robustness *any* request error is treated as "no bio" (the bio is purely
+    /// informational, so a transient failure shouldn't surface as an error).
     pub fn artist_bio(&self, artist_id: u64) -> Result<Option<String>> {
         #[derive(Deserialize)]
         struct Raw {
@@ -641,7 +643,8 @@ impl TidalClient {
                 let r: Raw = resp.json()?;
                 Ok(r.text.or(r.summary).map(|s| clean_bio(&s)))
             }
-            // No bio for this artist — not a hard error.
+            // No bio for this artist (404), or a transient request error — either
+            // way, not a hard failure; the popup just shows no biography.
             Err(_) => Ok(None),
         }
     }

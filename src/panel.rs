@@ -232,7 +232,7 @@ fn field(label: &str, value: String, accent: Option<(u8, u8, u8)>) -> Line<'stat
 /// Build the body lines for the track-info popup.
 pub fn build_track_info_lines(
     track: &TrackInfo,
-    credits: Option<&Vec<Credit>>,
+    credits: Option<&[Credit]>,
     accent: Option<(u8, u8, u8)>,
 ) -> Vec<Line<'static>> {
     let dim = Style::new().fg(Color::DarkGray);
