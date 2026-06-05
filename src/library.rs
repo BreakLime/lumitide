@@ -501,7 +501,8 @@ fn liked_tracks(client: &mut TidalClient, debug: bool) -> Result<()> {
             let track = &items[filtered[pos]];
             let saved = is_saved(&cfg.output_path(), &track.artist_name, &track.title);
             let label = format!("{} / {}", pos + 1, filtered.len());
-            let result = preview::run(client, track.id, debug, Some(label), Some(volume.clone()), saved, direction)?;
+            // These come from the liked-tracks list, so the heart starts filled.
+            let result = preview::run(client, track.id, debug, Some(label), Some(volume.clone()), saved, true, direction)?;
             match result.as_str() {
                 "quit" => break, // back to fuzzy select
                 "prev" => {
@@ -575,6 +576,7 @@ fn saved_albums(client: &mut TidalClient, debug: bool) -> Result<()> {
                 Some(label),
                 Some(volume.clone()),
                 saved,
+                false,
                 direction,
             )?;
 
@@ -662,7 +664,7 @@ fn followed_artists(client: &mut TidalClient, debug: bool) -> Result<()> {
                 let track = &track_items[filtered[pos]];
                 let saved = is_saved(&cfg.output_path(), &track.artist_name, &track.title);
                 let label = format!("{} / {}", pos + 1, filtered.len());
-                let result = preview::run(client, track.id, debug, Some(label), Some(volume.clone()), saved, direction)?;
+                let result = preview::run(client, track.id, debug, Some(label), Some(volume.clone()), saved, false, direction)?;
                 match result.as_str() {
                     "quit" => break, // back to fuzzy select
                     "prev" => {

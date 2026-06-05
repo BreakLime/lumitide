@@ -139,7 +139,7 @@ pub fn run(client: &mut TidalClient, debug: bool) -> Result<()> {
                     let saved = is_saved(&cfg.output_path(), &track.artist_name, &track.title);
                     let label = format!("{} / {}", play_idx + 1, tracks.len());
 
-                    let result = preview::run(client, track.id, debug, Some(label), Some(volume.clone()), saved, direction)?;
+                    let result = preview::run(client, track.id, debug, Some(label), Some(volume.clone()), saved, false, direction)?;
 
                     match result.as_str() {
                         "prev" => { play_idx = (play_idx + tracks.len() - 1) % tracks.len(); direction = Some("prev"); }

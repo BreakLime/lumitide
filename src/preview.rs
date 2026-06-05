@@ -449,6 +449,7 @@ pub fn run(
     track_label: Option<String>,
     shared_volume: Option<Arc<Mutex<f32>>>,
     already_saved: bool,
+    already_liked: bool,
     direction: Option<&str>,
 ) -> Result<String> {
     // ── Terminal up before API calls so the transition stays on screen ────────
@@ -533,6 +534,7 @@ pub fn run(
         volume,
         false,
         already_saved,
+        already_liked,
         Some(client.clone()),
     )?;
 
@@ -570,6 +572,7 @@ pub fn run_local(
         volume,
         true,
         false,
+        false, // already_liked — not applicable to local files
         None, // local files can't be liked on Tidal
     )
 }
@@ -649,6 +652,7 @@ fn play(
     volume: Arc<Mutex<f32>>,
     is_local: bool,
     already_saved: bool,
+    already_liked: bool,
     like_client: Option<TidalClient>,
 ) -> Result<String> {
     let cfg = config::load();
@@ -712,9 +716,16 @@ fn play(
     let dl_flash_until: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
 
     // ── Like state ────────────────────────────────────────────────────────────
-    // Local toggle: 'L' adds the track to Tidal favorites, 'L' again removes it.
-    // Updated optimistically and reverted if the network request fails.
-    let liked = Arc::new(AtomicBool::new(false));
+    // 'L' toggles the track in the user's Tidal favorites. Seeded from
+    // `already_liked` so the heart reflects reality on entry (e.g. when browsing
+    // the liked-tracks list) rather than always starting empty — otherwise the
+    // first press on an already-favorited track would silently arm a destructive
+    // unlike. Updated optimistically and reverted if the network request fails.
+    // `like_inflight` allows only one toggle at a time: rapid presses are dropped
+    // until it resolves, so a like/unlike pair can't complete out of order and
+    // leave the server disagreeing with the heart.
+    let liked = Arc::new(AtomicBool::new(already_liked));
+    let like_inflight = Arc::new(AtomicBool::new(false));
 
     let drop_times: Arc<Mutex<Vec<f64>>> = Arc::new(Mutex::new(Vec::new()));
     let beat_times: Arc<Mutex<Vec<f64>>> = Arc::new(Mutex::new(Vec::new()));
@@ -1044,20 +1055,27 @@ fn play(
                             // the visualizer keeps animating; state is reverted if
                             // the request fails.
                             if let Some(c) = like_client.clone() {
-                                let now_liked = !liked.load(Ordering::Relaxed);
-                                liked.store(now_liked, Ordering::Relaxed); // optimistic
-                                let liked_flag = liked.clone();
-                                let tid = track.id;
-                                thread::spawn(move || {
-                                    let res = if now_liked {
-                                        c.like_track(tid)
-                                    } else {
-                                        c.unlike_track(tid)
-                                    };
-                                    if res.is_err() {
-                                        liked_flag.store(!now_liked, Ordering::Relaxed);
-                                    }
-                                });
+                                // swap() returns the prior value; only proceed if no
+                                // toggle was already in flight, so overlapping
+                                // requests can't race to opposite outcomes.
+                                if !like_inflight.swap(true, Ordering::Relaxed) {
+                                    let now_liked = !liked.load(Ordering::Relaxed);
+                                    liked.store(now_liked, Ordering::Relaxed); // optimistic
+                                    let liked_flag = liked.clone();
+                                    let inflight_flag = like_inflight.clone();
+                                    let tid = track.id;
+                                    thread::spawn(move || {
+                                        let res = if now_liked {
+                                            c.like_track(tid)
+                                        } else {
+                                            c.unlike_track(tid)
+                                        };
+                                        if res.is_err() {
+                                            liked_flag.store(!now_liked, Ordering::Relaxed);
+                                        }
+                                        inflight_flag.store(false, Ordering::Relaxed);
+                                    });
+                                }
                             }
                         }
                         KeyCode::Char('d') | KeyCode::Char('D') => {

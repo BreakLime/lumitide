@@ -30,6 +30,7 @@ pub fn run(client: &mut TidalClient, seed_track_id: u64, debug: bool) -> Result<
             Some(label),
             Some(volume.clone()),
             saved,
+            false,
             direction,
         )?;
 
