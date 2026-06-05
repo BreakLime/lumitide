@@ -77,19 +77,21 @@ pub fn render(frame: &mut Frame, state: &PanelState) {
 
     // ── Border + controls (only when show_controls) ───────────────────────────
     let inner = if state.show_controls {
-        let block_w = cover_col_w + right_col_w + 2; // +2 borders
-        let block_h = right_rows.max(cover_rows) + 2; // +2 borders
-        let x = terminal.x + terminal.width.saturating_sub(block_w) / 2;
-        let y = terminal.y + terminal.height.saturating_sub(block_h) / 2;
-        let area = Rect::new(x, y, block_w.min(terminal.width), block_h.min(terminal.height));
-
         let hint_text = if state.is_local {
             "← prev  Spc pause  → next  ↑↓ vol  i info  a artist  q/Esc quit"
         } else {
             "← prev  Spc pause  → next  ↑↓ vol  d download  r radio  i info  a artist  q/Esc quit"
         };
-        let controls = Title::from(Line::styled(hint_text, dim))
-            .alignment(Alignment::Center);
+        let hint_line = Line::styled(hint_text, dim);
+        // The box must fit the cover+info columns *and* the controls hint in the
+        // border title, else a long hint is clipped at both ends.
+        let block_w = (cover_col_w + right_col_w + 2).max(hint_line.width() as u16 + 2);
+        let block_h = right_rows.max(cover_rows) + 2; // +2 borders
+        let x = terminal.x + terminal.width.saturating_sub(block_w) / 2;
+        let y = terminal.y + terminal.height.saturating_sub(block_h) / 2;
+        let area = Rect::new(x, y, block_w.min(terminal.width), block_h.min(terminal.height));
+
+        let controls = Title::from(hint_line).alignment(Alignment::Center);
         let outer = Block::default()
             .borders(Borders::ALL)
             .border_style(dim)
@@ -284,9 +286,12 @@ pub fn build_track_info_lines(
         }
         Some(c) => {
             lines.push(Line::from(Span::styled("Credits", bold_accent)));
+            // Pad role labels to the longest role (+2) so values never collide
+            // with long roles like "Mixing Engineer" or "Drum Programmer".
+            let role_w = c.iter().map(|cr| cr.role.chars().count()).max().unwrap_or(0).max(9) + 2;
             for credit in c {
                 lines.push(Line::from(vec![
-                    Span::styled(format!("{:<11}", credit.role), dim),
+                    Span::styled(format!("{:<role_w$}", credit.role), dim),
                     Span::styled(credit.names.join(", "), Style::new().fg(Color::Gray)),
                 ]));
             }
