@@ -78,9 +78,9 @@ pub fn render(frame: &mut Frame, state: &PanelState) {
     // ── Border + controls (only when show_controls) ───────────────────────────
     let inner = if state.show_controls {
         let hint_text = if state.is_local {
-            "← prev  Spc pause  → next  ↑↓ vol  i info  a artist  q/Esc quit"
+            "← prev  Spc pause  → next  ↑↓ vol  t info  a artist  q/Esc quit"
         } else {
-            "← prev  Spc pause  → next  ↑↓ vol  d download  r radio  i info  a artist  q/Esc quit"
+            "← prev  Spc pause  → next  ↑↓ vol  d download  r radio  t info  a artist  q/Esc quit"
         };
         let hint_line = Line::styled(hint_text, dim);
         // The box must fit the cover+info columns *and* the controls hint in the

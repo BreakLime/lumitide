@@ -1078,7 +1078,7 @@ fn play(
                         KeyCode::Char('?') => {
                             show_controls = !show_controls;
                         }
-                        KeyCode::Char('i') | KeyCode::Char('I') => {
+                        KeyCode::Char('t') | KeyCode::Char('T') => {
                             show_artist_info = false;
                             show_track_info = !show_track_info;
                             // Lazily fetch credits the first time the popup opens
