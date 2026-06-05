@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use serde::Deserialize;
@@ -5,6 +7,10 @@ use serde::Deserialize;
 use crate::auth::Session;
 
 const API_BASE: &str = "https://api.tidal.com/v1";
+
+// Cap favourite (like/unlike) requests so a stalled connection can't leave the
+// toggle's in-flight guard stuck and lock the user out of re-toggling.
+const FAVORITES_TIMEOUT: Duration = Duration::from_secs(15);
 
 // ─── Public data types ────────────────────────────────────────────────────────
 
@@ -175,12 +181,10 @@ impl TidalClient {
         form: &[(&str, &str)],
     ) -> Result<reqwest::blocking::Response> {
         let url = format!("{}/{}", API_BASE, path);
-        let mut req = self.client.post(&url)
-            .header("Authorization", self.session.auth_header());
-        for &(k, v) in params {
-            req = req.query(&[(k, v)]);
-        }
-        let resp = req.form(form).send()?;
+        let req = self.client.post(&url)
+            .header("Authorization", self.session.auth_header())
+            .query(params);
+        let resp = req.form(form).timeout(FAVORITES_TIMEOUT).send()?;
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().unwrap_or_default();
@@ -191,12 +195,10 @@ impl TidalClient {
 
     fn delete(&self, path: &str, params: &[(&str, &str)]) -> Result<reqwest::blocking::Response> {
         let url = format!("{}/{}", API_BASE, path);
-        let mut req = self.client.delete(&url)
-            .header("Authorization", self.session.auth_header());
-        for &(k, v) in params {
-            req = req.query(&[(k, v)]);
-        }
-        let resp = req.send()?;
+        let req = self.client.delete(&url)
+            .header("Authorization", self.session.auth_header())
+            .query(params);
+        let resp = req.timeout(FAVORITES_TIMEOUT).send()?;
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().unwrap_or_default();
