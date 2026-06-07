@@ -15,10 +15,18 @@ pub struct EncryptionInfo {
     pub nonce: [u8; 8],
 }
 
-/// Result of a stream_url call: the CDN URL plus optional encryption info.
-pub struct StreamInfo {
-    pub url: String,
-    pub encryption: Option<EncryptionInfo>,
+/// Result of a stream_url call: how Tidal is delivering this track's audio.
+pub enum StreamInfo {
+    /// A single CDN URL (Tidal "bts" manifest), optionally AES-128-CTR encrypted.
+    /// Covers Windows lossless FLAC and the MP4/AAC fallback on all platforms.
+    Single {
+        url: String,
+        encryption: Option<EncryptionInfo>,
+    },
+    /// A multi-segment DASH stream (HiRes FLAC): the init segment followed by the
+    /// media segments, in order. Concatenate and remux to native FLAC — these are
+    /// unencrypted, so no decryption is needed.
+    Dash { segments: Vec<String> },
 }
 
 #[derive(Debug, Clone)]
@@ -181,8 +189,17 @@ impl TidalClient {
     pub fn stream_url(&self, id: u64) -> Result<StreamInfo> {
         #[cfg(target_os = "windows")]
         let quality = "LOSSLESS";
+        // Linux/macOS: request HI_RES_LOSSLESS only when the user wants FLAC AND
+        // ffmpeg is available to remux the DASH segments. Tidal serves HiRes-tagged
+        // tracks as unencrypted DASH FLAC (up to 24-bit); non-HiRes tracks fall back
+        // to AAC. If FLAC is disabled or ffmpeg is missing we ask for HIGH, which
+        // keeps the original MP4/AAC behaviour with no ffmpeg dependency.
         #[cfg(not(target_os = "windows"))]
-        let quality = "HIGH";
+        let quality = if crate::config::load().hires_flac && ffmpeg_available() {
+            "HI_RES_LOSSLESS"
+        } else {
+            "HIGH"
+        };
 
         let resp = self.get(
             &format!("tracks/{}/playbackinfopostpaywall", id),
@@ -225,16 +242,22 @@ impl TidalClient {
             } else {
                 None
             };
-            Ok(StreamInfo { url, encryption })
+            Ok(StreamInfo::Single { url, encryption })
         } else if info.manifest_mime_type.contains("dash") {
             let xml = String::from_utf8_lossy(&decoded);
-            let url = xml.lines()
-                .find(|l| l.contains("<BaseURL>"))
-                .and_then(|l| l.split("<BaseURL>").nth(1))
-                .and_then(|l| l.split("</BaseURL>").next())
-                .map(|s| s.trim().to_string())
-                .ok_or_else(|| anyhow!("Could not extract BaseURL from DASH manifest"))?;
-            Ok(StreamInfo { url, encryption: None })
+            // HiRes FLAC is delivered as a multi-segment DASH SegmentTemplate.
+            if let Some(segments) = parse_dash_segments(&xml) {
+                Ok(StreamInfo::Dash { segments })
+            } else {
+                // Old-style single-segment DASH: a lone <BaseURL>.
+                let url = xml.lines()
+                    .find(|l| l.contains("<BaseURL>"))
+                    .and_then(|l| l.split("<BaseURL>").nth(1))
+                    .and_then(|l| l.split("</BaseURL>").next())
+                    .map(|s| s.trim().to_string())
+                    .ok_or_else(|| anyhow!("Could not extract segments or BaseURL from DASH manifest"))?;
+                Ok(StreamInfo::Single { url, encryption: None })
+            }
         } else {
             Err(anyhow!("Unknown manifest type: {}", info.manifest_mime_type))
         }
@@ -579,6 +602,108 @@ fn decrypt_security_token(key_id: &str) -> Result<EncryptionInfo> {
     Ok(EncryptionInfo { key, nonce })
 }
 
+// ─── DASH (HiRes FLAC) ───────────────────────────────────────────────────────
+
+/// Parse a Tidal DASH `SegmentTemplate` manifest into an ordered list of segment
+/// URLs (the init segment first, then each media segment). Returns `None` if the
+/// manifest isn't SegmentTemplate-based, so the caller can fall back to a single
+/// `<BaseURL>`.
+fn parse_dash_segments(xml: &str) -> Option<Vec<String>> {
+    let st = xml.find("<SegmentTemplate")?;
+    let tag_end = xml[st..].find('>')? + st;
+    let tag = &xml[st..tag_end];
+
+    let init = xml_attr(tag, "initialization")?;
+    let media = xml_attr(tag, "media")?;
+    let start: u64 = xml_attr(tag, "startNumber").and_then(|v| v.parse().ok()).unwrap_or(1);
+
+    // Count media segments from the SegmentTimeline: each <S> element covers
+    // (1 + r) segments, where r ("repeat") defaults to 0.
+    let timeline = &xml[xml.find("<SegmentTimeline")?..];
+    let mut count: u64 = 0;
+    let mut rest = timeline;
+    while let Some(p) = rest.find("<S ") {
+        let end = rest[p..].find("/>")? + p;
+        let s_el = &rest[p..end];
+        let r: u64 = xml_attr(s_el, "r").and_then(|v| v.parse().ok()).unwrap_or(0);
+        count += 1 + r;
+        rest = &rest[end + 2..];
+    }
+    if count == 0 {
+        return None;
+    }
+
+    let mut segments = Vec::with_capacity(count as usize + 1);
+    segments.push(init.to_string());
+    for n in start..start + count {
+        segments.push(media.replace("$Number$", &n.to_string()));
+    }
+    Some(segments)
+}
+
+/// Whether `ffmpeg` is on PATH. Probed once and cached — it gates whether we even
+/// request the DASH/FLAC tier, so a machine without ffmpeg behaves exactly as before
+/// (MP4/AAC) instead of failing on HiRes tracks.
+#[cfg(not(target_os = "windows"))]
+fn ffmpeg_available() -> bool {
+    use std::sync::OnceLock;
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    })
+}
+
+/// Read the value of an XML attribute `name="..."` from a single element string.
+fn xml_attr<'a>(element: &'a str, name: &str) -> Option<&'a str> {
+    let needle = format!("{}=\"", name);
+    let start = element.find(&needle)? + needle.len();
+    let end = element[start..].find('"')? + start;
+    Some(&element[start..end])
+}
+
+/// Download an ordered list of DASH segments, concatenate them, and remux to a
+/// native FLAC file at `dest` using ffmpeg. This is a lossless stream-copy
+/// (`-c:a copy`) — the FLAC audio is never decoded or re-encoded, only rewrapped
+/// from the fragmented-MP4 container into a `.flac` container. `dest` should end
+/// in `.flac`; `ffmpeg` must be on PATH.
+pub fn fetch_dash_flac(segments: &[String], dest: &std::path::Path) -> Result<()> {
+    use std::io::Write;
+    let http = reqwest::blocking::Client::builder()
+        .user_agent(crate::auth::TIDAL_UA)
+        .build()?;
+
+    let part = dest.with_extension("mp4.part");
+    {
+        let mut f = std::fs::File::create(&part)?;
+        for seg in segments {
+            let bytes = http.get(seg).send()?.error_for_status()?.bytes()?;
+            f.write_all(&bytes)?;
+        }
+    }
+
+    let status = std::process::Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(&part)
+        .args(["-c:a", "copy", "-y"])
+        .arg(dest)
+        .status();
+    let _ = std::fs::remove_file(&part);
+
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(anyhow!("ffmpeg remux failed (exit {:?})", s.code())),
+        Err(e) => Err(anyhow!(
+            "ffmpeg not found ({e}). Install ffmpeg to play/download HiRes FLAC on Linux/macOS."
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -646,6 +771,57 @@ mod tests {
         assert_eq!(t.album_artist, "Solo");
     }
 
+    /// End-to-end HiRes path: session → stream_url (DASH) → fetch_dash_flac →
+    /// validate native FLAC. Run with:
+    ///   cargo test e2e_dash_flac -- --ignored --nocapture
+    #[test]
+    #[ignore = "requires a real Tidal session on disk + ffmpeg"]
+    fn e2e_dash_flac_download() {
+        let session = crate::auth::get_session().expect("load session");
+        let client = TidalClient::new(session);
+        let track_id = 19823990u64; // Daft Punk — Get Lucky (HIRES_LOSSLESS tagged)
+
+        let segments = match client.stream_url(track_id).expect("stream_url failed") {
+            StreamInfo::Dash { segments } => segments,
+            StreamInfo::Single { .. } => panic!("expected DASH HiRes manifest — is this a HiRes account/track?"),
+        };
+        println!("[1] DASH manifest: {} segments (init + media)", segments.len());
+        assert!(segments.len() > 1, "expected init + media segments");
+
+        let tmp = tempfile::Builder::new().suffix(".flac").tempfile().unwrap();
+        let dest = tmp.path().to_path_buf();
+        fetch_dash_flac(&segments, &dest).expect("fetch_dash_flac failed");
+
+        let mut head = [0u8; 4];
+        std::io::Read::read_exact(&mut std::fs::File::open(&dest).unwrap(), &mut head).unwrap();
+        let size = std::fs::metadata(&dest).unwrap().len();
+        println!("[2] wrote {} bytes, magic={:?}", size, &head);
+        assert_eq!(&head, b"fLaC", "output is not a native FLAC file");
+        assert!(size > 1_000_000, "FLAC file suspiciously small");
+        println!("[3] OK — native FLAC produced");
+    }
+
+    #[test]
+    fn dash_segments_parsed_from_segment_timeline() {
+        // Init segment + two <S> runs: (1 + 61) + (1 + 0) = 63 media segments.
+        let xml = r#"<MPD><Period><AdaptationSet><Representation codecs="flac">
+            <SegmentTemplate timescale="44100" initialization="https://cdn/init.mp4?t=1"
+              media="https://cdn/$Number$.mp4?t=1" startNumber="1">
+              <SegmentTimeline><S d="176128" r="61"/><S d="676"/></SegmentTimeline>
+            </SegmentTemplate></Representation></AdaptationSet></Period></MPD>"#;
+        let segs = parse_dash_segments(xml).expect("should parse");
+        assert_eq!(segs.len(), 64); // 1 init + 63 media
+        assert_eq!(segs[0], "https://cdn/init.mp4?t=1");
+        assert_eq!(segs[1], "https://cdn/1.mp4?t=1");
+        assert_eq!(segs[63], "https://cdn/63.mp4?t=1");
+    }
+
+    #[test]
+    fn dash_segments_none_without_segment_template() {
+        let xml = r#"<MPD><Period><BaseURL>https://cdn/single.flac</BaseURL></Period></MPD>"#;
+        assert!(parse_dash_segments(xml).is_none());
+    }
+
     #[test]
     fn all_artists_collected() {
         let t = parse(r#"{"id":1,"title":"Song","artists":[{"id":1,"name":"A"},{"id":2,"name":"B"},{"id":3,"name":"C"}],"album":{"id":100,"title":"Album"}}"#);
@@ -670,10 +846,18 @@ mod tests {
         let track_id = 86430568u64; // Netsky — Escape (known LOSSLESS track)
         let client = TidalClient::new(session.clone());
         let stream_info = client.stream_url(track_id).expect("stream_url failed");
+        let (url, encryption) = match stream_info {
+            StreamInfo::Single { url, encryption } => (url, encryption),
+            StreamInfo::Dash { segments } => {
+                println!("[2] DASH HiRes FLAC manifest — {} segments (init + media); \
+                          this test only covers the bts/decrypt path", segments.len());
+                return;
+            }
+        };
         println!("[2] stream_url OK");
-        println!("    url prefix  : {}", &stream_info.url[..stream_info.url.len().min(80)]);
-        println!("    encrypted   : {}", stream_info.encryption.is_some());
-        if let Some(ref enc) = stream_info.encryption {
+        println!("    url prefix  : {}", &url[..url.len().min(80)]);
+        println!("    encrypted   : {}", encryption.is_some());
+        if let Some(ref enc) = encryption {
             println!("    key  (hex)  : {}", enc.key.iter().map(|b| format!("{:02x}", b)).collect::<String>());
             println!("    nonce(hex)  : {}", enc.nonce.iter().map(|b| format!("{:02x}", b)).collect::<String>());
         }
@@ -682,7 +866,7 @@ mod tests {
         let http = reqwest::blocking::Client::builder()
             .user_agent(crate::auth::TIDAL_UA)
             .build().unwrap();
-        let mut resp = http.get(&stream_info.url)
+        let mut resp = http.get(&url)
             .header("Range", "bytes=0-262143")
             .send().expect("HTTP GET failed");
         println!("[3] HTTP {} content-length={:?}", resp.status(), resp.content_length());
@@ -693,7 +877,7 @@ mod tests {
         println!("    downloaded {} bytes", raw.len());
 
         // ── Step 4: decrypt (if needed) ───────────────────────────────────────
-        if let Some(enc) = stream_info.encryption {
+        if let Some(enc) = encryption {
             let mut iv = [0u8; 16];
             iv[..8].copy_from_slice(&enc.nonce);
             let mut cipher = Aes128Ctr::new_from_slices(&enc.key, &iv).expect("cipher init");

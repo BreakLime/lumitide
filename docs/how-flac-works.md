@@ -6,7 +6,7 @@ Tidal changed their streaming API in a way that broke lossless audio for every t
 
 ## What broke and why
 
-Third-party clients were using a public OAuth client (`fX2JxdmntZWK0ixT`) with a device code grant. The tokens it issues carry `"at": "BROWSER"` in the JWT payload. At some point Tidal started gating lossless streams on `"at": "INTERNAL"` tokens only — BROWSER tokens now silently fall back to MP4/AAC.
+Third-party clients were using a public OAuth client (`fX2JxdmntZWK0ixT`) with a device code grant. Historically the tokens it issued carried `"at": "BROWSER"` in the JWT payload, and Tidal gated lossless streams on `"at": "INTERNAL"` tokens only, so BROWSER tokens silently fell back to MP4/AAC. (Tidal has since started issuing `"at": "INTERNAL"` tokens to this client too — see [Lossless FLAC on Linux / macOS](#lossless-flac-on-linux--macos) below.)
 
 Most clients have open issues about this. The common workaround is to manually swap in client IDs scraped from other Tidal apps — brittle, and those IDs get rotated.
 
@@ -76,7 +76,27 @@ nonce = plain[16:24]
 
 | Platform | Auth flow | Quality |
 |----------|-----------|---------|
-| Windows  | PKCE (browser auto-redirect) | LOSSLESS FLAC |
-| Linux / macOS | Device code | HIGH (MP4/AAC) |
+| Windows  | PKCE (browser auto-redirect) | LOSSLESS FLAC (bts / `OLD_AES`) |
+| Linux / macOS | Device code | HiRes tracks → LOSSLESS FLAC (DASH); other tracks → HIGH (MP4/AAC) |
 
-FLAC on Linux/macOS requires registering a `tidal://` URI handler, which varies across desktop environments. It's on the roadmap.
+### Lossless FLAC on Linux / macOS
+
+It turned out the `tidal://` URI handler was never needed. The device-code client
+(`fX2JxdmntZWK0ixT`) already issues `"at": "INTERNAL"` tokens, and on a HiRes-capable
+account Tidal will serve lossless FLAC to it — just via a **different delivery path**
+than Windows:
+
+- Request `audioquality=HI_RES_LOSSLESS` (plain `LOSSLESS` is silently downgraded to
+  AAC on this client).
+- For HiRes-tagged tracks the playback endpoint returns a **DASH** manifest
+  (`application/dash+xml`) with `codecs="flac"`, up to 24-bit — **not** the encrypted
+  `bts` / `OLD_AES` single-URL manifest Windows gets. There is no `keyId` and no
+  encryption: the segments are plain FLAC-in-fragmented-MP4.
+- Lumitide parses the DASH `SegmentTemplate` (init segment + numbered media segments),
+  downloads and concatenates them, then **remuxes to a native `.flac`** with
+  `ffmpeg -c:a copy` — a lossless stream-copy that rewraps the container without
+  decoding or re-encoding the audio. (This is why `ffmpeg` is a runtime requirement on
+  Linux/macOS.)
+
+Non-HiRes (CD-quality `LOSSLESS`-only) tracks are still served to this client as
+MP4/AAC and saved as `.m4a`.

@@ -115,81 +115,100 @@ fn download_track(entry: &QueueEntry, http: &reqwest::blocking::Client) {
         }
     };
 
-    // Download to .tmp, then detect actual format from magic bytes before finalising filename
-    let tmp_name = safe_filename(&format!("{} - {}.tmp", entry.track.artist_name, entry.track.title));
-    let tmp_path = out_dir.join(&tmp_name);
-
-    let resp = match http.get(&stream_info.url).send() {
-        Ok(r) => r,
-        Err(_) => return,
-    };
-    let mut f = match std::fs::File::create(&tmp_path) {
-        Ok(f) => f,
-        Err(_) => return,
-    };
-    let mut reader = match resp.error_for_status() {
-        Ok(r) => r,
-        Err(_) => {
-            let _ = std::fs::remove_file(&tmp_path);
-            return;
+    // Resolve the stream to a finished file on disk, handling both the single-URL
+    // (bts, maybe AES-encrypted) and multi-segment DASH (HiRes FLAC) cases.
+    let dest = match stream_info {
+        crate::api::StreamInfo::Dash { segments } => {
+            // HiRes FLAC: fetch every segment + remux to native .flac (lossless).
+            let filename = safe_filename(&format!(
+                "{} - {}.flac", entry.track.artist_name, entry.track.title
+            ));
+            let dest = out_dir.join(&filename);
+            if crate::api::fetch_dash_flac(&segments, &dest).is_err() {
+                let _ = std::fs::remove_file(&dest);
+                return;
+            }
+            dest
         }
-    };
+        crate::api::StreamInfo::Single { url, encryption } => {
+            // Download to .tmp, then detect actual format from magic bytes before finalising filename
+            let tmp_name = safe_filename(&format!("{} - {}.tmp", entry.track.artist_name, entry.track.title));
+            let tmp_path = out_dir.join(&tmp_name);
 
-    use ctr::cipher::{KeyIvInit, StreamCipher};
-    type Aes128Ctr = ctr::Ctr64BE<aes::Aes128>;
-    let mut maybe_cipher = stream_info.encryption.map(|enc| {
-        let mut iv = [0u8; 16];
-        iv[..8].copy_from_slice(&enc.nonce);
-        Aes128Ctr::new_from_slices(&enc.key, &iv).expect("valid key/iv")
-    });
-
-    let mut buf = vec![0u8; 65_536];
-    let mut ok = true;
-    loop {
-        match reader.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                let chunk = &mut buf[..n];
-                if let Some(ref mut cipher) = maybe_cipher {
-                    cipher.apply_keystream(chunk);
+            let resp = match http.get(&url).send() {
+                Ok(r) => r,
+                Err(_) => return,
+            };
+            let mut f = match std::fs::File::create(&tmp_path) {
+                Ok(f) => f,
+                Err(_) => return,
+            };
+            let mut reader = match resp.error_for_status() {
+                Ok(r) => r,
+                Err(_) => {
+                    let _ = std::fs::remove_file(&tmp_path);
+                    return;
                 }
-                if f.write_all(chunk).is_err() {
-                    ok = false;
-                    break;
+            };
+
+            use ctr::cipher::{KeyIvInit, StreamCipher};
+            type Aes128Ctr = ctr::Ctr64BE<aes::Aes128>;
+            let mut maybe_cipher = encryption.map(|enc| {
+                let mut iv = [0u8; 16];
+                iv[..8].copy_from_slice(&enc.nonce);
+                Aes128Ctr::new_from_slices(&enc.key, &iv).expect("valid key/iv")
+            });
+
+            let mut buf = vec![0u8; 65_536];
+            let mut ok = true;
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let chunk = &mut buf[..n];
+                        if let Some(ref mut cipher) = maybe_cipher {
+                            cipher.apply_keystream(chunk);
+                        }
+                        if f.write_all(chunk).is_err() {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        ok = false;
+                        break;
+                    }
                 }
             }
-            Err(_) => {
-                ok = false;
-                break;
+            drop(f);
+
+            if !ok {
+                let _ = std::fs::remove_file(&tmp_path);
+                return;
             }
+
+            // Read magic bytes to determine actual container format
+            let ext = {
+                let mut magic = [0u8; 12];
+                let n = std::fs::File::open(&tmp_path)
+                    .and_then(|mut fh| fh.read(&mut magic))
+                    .unwrap_or(0);
+                crate::utils::audio_extension(&magic[..n])
+            };
+
+            let filename = safe_filename(&format!(
+                "{} - {}.{}",
+                entry.track.artist_name, entry.track.title, ext
+            ));
+            let dest = out_dir.join(&filename);
+
+            if std::fs::rename(&tmp_path, &dest).is_err() {
+                let _ = std::fs::remove_file(&tmp_path);
+                return;
+            }
+            dest
         }
-    }
-    drop(f);
-
-    if !ok {
-        let _ = std::fs::remove_file(&tmp_path);
-        return;
-    }
-
-    // Read magic bytes to determine actual container format
-    let ext = {
-        let mut magic = [0u8; 12];
-        let n = std::fs::File::open(&tmp_path)
-            .and_then(|mut fh| fh.read(&mut magic))
-            .unwrap_or(0);
-        crate::utils::audio_extension(&magic[..n])
     };
-
-    let filename = safe_filename(&format!(
-        "{} - {}.{}",
-        entry.track.artist_name, entry.track.title, ext
-    ));
-    let dest = out_dir.join(&filename);
-
-    if std::fs::rename(&tmp_path, &dest).is_err() {
-        let _ = std::fs::remove_file(&tmp_path);
-        return;
-    }
 
     let cover = entry.track.album_cover.as_deref()
         .and_then(|id| client.fetch_cover(id, 1280).ok());

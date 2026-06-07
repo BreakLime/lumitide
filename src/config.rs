@@ -30,6 +30,11 @@ pub struct Config {
     pub calm_mode: bool,
     #[serde(default = "default_true")]
     pub show_controls_hint: bool,
+    /// Linux/macOS only: request HiRes lossless FLAC (via DASH, needs ffmpeg).
+    /// When off — or when ffmpeg isn't installed — falls back to MP4/AAC.
+    /// No effect on Windows, which always streams lossless FLAC.
+    #[serde(default = "default_true")]
+    pub hires_flac: bool,
 }
 
 fn default_search_limit() -> u32 { 10 }
@@ -50,6 +55,7 @@ impl Default for Config {
             pywal:              false,
             calm_mode:          false,
             show_controls_hint: true,
+            hires_flac:         true,
         }
     }
 }
@@ -181,6 +187,7 @@ pub fn edit_interactive() -> Result<()> {
             format!("Pywal colors        {}", if cfg.pywal          { "on" } else { "off" }),
             format!("Calm mode           {}", if cfg.calm_mode      { "on" } else { "off" }),
             format!("Controls hint       {}", if cfg.show_controls_hint { "on" } else { "off" }),
+            format!("HiRes FLAC          {}", if cfg.hires_flac        { "on" } else { "off" }),
             "Back".to_string(),
         ];
 
@@ -236,6 +243,7 @@ pub fn edit_interactive() -> Result<()> {
             4 => { cfg.pywal              = Confirm::new().with_prompt("Pywal colors").default(cfg.pywal).interact()?;                save(&cfg)?; }
             5 => { cfg.calm_mode          = Confirm::new().with_prompt("Calm mode").default(cfg.calm_mode).interact()?;               save(&cfg)?; }
             6 => { cfg.show_controls_hint = Confirm::new().with_prompt("Controls hint").default(cfg.show_controls_hint).interact()?;  save(&cfg)?; }
+            7 => { cfg.hires_flac         = Confirm::new().with_prompt("HiRes FLAC (Linux/macOS, needs ffmpeg)").default(cfg.hires_flac).interact()?; save(&cfg)?; }
             _ => break,
         }
     }

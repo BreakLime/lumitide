@@ -486,22 +486,38 @@ pub fn run(
     let download_done = Arc::new(AtomicBool::new(false));
     let header_ready = Arc::new(AtomicBool::new(false));
 
-    let url_clone = stream_info.url.clone();
-    let enc_clone = stream_info.encryption;
-    let path_clone = tmp_path.clone();
-    let dd_clone = download_done.clone();
-    let hr_clone = header_ready.clone();
-
     let dl_bytes_shared = Arc::new(AtomicU64::new(0));
     let dl_total_shared = Arc::new(AtomicU64::new(0));
-    let dl_bytes_dl = dl_bytes_shared.clone();
-    let dl_total_dl = dl_total_shared.clone();
 
-    thread::spawn(move || {
-        download_to_file(&url_clone, &path_clone, &dd_clone, &hr_clone, &dl_bytes_dl, &dl_total_dl, enc_clone);
-    });
+    match stream_info {
+        crate::api::StreamInfo::Single { url, encryption } => {
+            // Single CDN URL: stream progressively into the temp file, decrypting
+            // on the fly, so playback can start before the download finishes.
+            let path_clone = tmp_path.clone();
+            let dd_clone = download_done.clone();
+            let hr_clone = header_ready.clone();
+            let dl_bytes_dl = dl_bytes_shared.clone();
+            let dl_total_dl = dl_total_shared.clone();
+            thread::spawn(move || {
+                download_to_file(&url, &path_clone, &dd_clone, &hr_clone, &dl_bytes_dl, &dl_total_dl, encryption);
+            });
+        }
+        crate::api::StreamInfo::Dash { segments } => {
+            // HiRes FLAC: ffmpeg needs the whole fragmented-MP4 before it can
+            // remux, so fetch every segment + remux to native FLAC, then play.
+            // (No progressive start for DASH — playback begins once remux is done.)
+            let path_clone = tmp_path.clone();
+            let dd_clone = download_done.clone();
+            let hr_clone = header_ready.clone();
+            thread::spawn(move || {
+                let _ = crate::api::fetch_dash_flac(&segments, &path_clone);
+                dd_clone.store(true, Ordering::Relaxed);   // file complete (or failed)
+                hr_clone.store(true, Ordering::Relaxed);   // release the wait below
+            });
+        }
+    }
 
-    // Wait until header bytes are ready
+    // Wait until the temp file is ready to probe/play
     loop {
         if header_ready.load(Ordering::Relaxed) { break; }
         thread::sleep(Duration::from_millis(50));

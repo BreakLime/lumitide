@@ -10,7 +10,7 @@ A terminal music player for Tidal, written in Rust.
 Stream audio from your Tidal account directly in the terminal, with album art, a live spectrum visualizer, beat/drop detection, and a background download queue.
 
 > [!NOTE]
-> **Audio quality is platform-dependent.** Windows uses the Tidal desktop app auth flow and streams/downloads **lossless FLAC**. Linux and macOS use a device code flow and receive **MP4 (HIGH quality / AAC)**. Native FLAC support for Linux/macOS is planned.
+> **Audio quality is platform-dependent.** Windows uses the Tidal desktop app auth flow and streams/downloads **lossless FLAC**. On Linux and macOS, HiRes-tagged tracks now stream/download as **lossless FLAC (up to 24-bit)** via Tidal's DASH delivery (requires `ffmpeg`); non-HiRes tracks fall back to **MP4 (HIGH quality / AAC)**.
 > See [docs/how-flac-works.md](docs/how-flac-works.md) for a full technical write-up of the auth flow and stream decryption.
 
 ![Lumitide demo](assets/demo.gif)
@@ -21,7 +21,7 @@ Stream audio from your Tidal account directly in the terminal, with album art, a
 
 ## Features
 
-- **Stream** audio from Tidal in real time — **lossless FLAC** on Windows, **MP4/AAC** (HIGH quality) on Linux/macOS
+- **Stream** audio from Tidal in real time — **lossless FLAC** on Windows, and on Linux/macOS for HiRes tracks (up to 24-bit, via DASH); **MP4/AAC** (HIGH quality) for non-HiRes tracks on Linux/macOS
 - **Album cover art** rendered as Braille characters in the terminal
 - **Spectrum visualizer** with peak-hold bars and beat/drop detection
 - **Album-art color theming** — title, spectrum bars, and transition arrows all take their color from the current cover
@@ -112,6 +112,19 @@ cargo build --release
 sudo apt install libasound2-dev  # Debian / Ubuntu
 sudo dnf install alsa-lib-devel  # Fedora
 ```
+
+**Linux / macOS HiRes FLAC** is delivered as segmented DASH and remuxed to a
+native `.flac` with [`ffmpeg`](https://ffmpeg.org/). To get lossless FLAC, install it
+and make sure it's on your `PATH`:
+```sh
+sudo apt install ffmpeg     # Debian / Ubuntu
+sudo dnf install ffmpeg     # Fedora
+brew install ffmpeg         # macOS
+```
+`ffmpeg` is **optional**: if it isn't installed (or you turn HiRes FLAC off in the
+config), Lumitide simply falls back to the previous MP4/AAC (HIGH) behaviour — nothing
+breaks. You can toggle it via `HiRes FLAC` in the interactive config, or the
+`hires_flac` field in `~/.config/lumitide/config.json`.
 
 ## Authentication
 
