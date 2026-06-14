@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use serde::Deserialize;
+use std::time::Duration;
 
 use crate::auth::Session;
 
@@ -145,6 +146,7 @@ impl From<RawTrack> for TrackInfo {
 
 // ─── Client ───────────────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct TidalClient {
     pub session: Session,
     client: reqwest::blocking::Client,
@@ -154,6 +156,7 @@ impl TidalClient {
     pub fn new(session: Session) -> Self {
         let client = reqwest::blocking::Client::builder()
             .user_agent(crate::auth::TIDAL_UA)
+            .timeout(Duration::from_secs(30))
             .build()
             .unwrap_or_default();
         Self { session, client }
@@ -676,6 +679,7 @@ pub fn fetch_dash_flac(segments: &[String], dest: &std::path::Path) -> Result<()
     use std::io::Write;
     let http = reqwest::blocking::Client::builder()
         .user_agent(crate::auth::TIDAL_UA)
+        .timeout(Duration::from_secs(30))
         .build()?;
 
     let part = dest.with_extension("mp4.part");

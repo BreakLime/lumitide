@@ -471,11 +471,8 @@ pub fn run(
         Err(e) => { teardown_terminal(&mut terminal); return Err(e); }
     };
 
-    // Fetch cover
-    let cover_bytes = track.album_cover.as_deref()
-        .and_then(|id| client.fetch_cover(id, 320).ok());
-
-    // Download to temp file in a background thread
+    // Download to temp file in a background thread. Started before the cover fetch
+    // (below) so the audio download — not a cover GET — is first on the wire.
     let tmp = match tempfile::Builder::new().suffix(".flac").tempfile() {
         Ok(t) => t,
         Err(e) => { teardown_terminal(&mut terminal); return Err(e.into()); }
@@ -503,19 +500,26 @@ pub fn run(
             });
         }
         crate::api::StreamInfo::Dash { segments } => {
-            // HiRes FLAC: ffmpeg needs the whole fragmented-MP4 before it can
-            // remux, so fetch every segment + remux to native FLAC, then play.
-            // (No progressive start for DASH — playback begins once remux is done.)
+            // HiRes FLAC: pipe DASH segments straight through ffmpeg and tee its
+            // FLAC output into the temp file as it arrives, so playback starts
+            // after the first frames instead of waiting for the whole track.
             let path_clone = tmp_path.clone();
             let dd_clone = download_done.clone();
             let hr_clone = header_ready.clone();
+            let dl_bytes_dl = dl_bytes_shared.clone();
             thread::spawn(move || {
-                let _ = crate::api::fetch_dash_flac(&segments, &path_clone);
-                dd_clone.store(true, Ordering::Relaxed);   // file complete (or failed)
-                hr_clone.store(true, Ordering::Relaxed);   // release the wait below
+                stream_dash_flac(&segments, &path_clone, &dd_clone, &hr_clone, &dl_bytes_dl);
             });
         }
     }
+
+    // Cover art: fetch on a background thread with a cloned client (cheap — the
+    // reqwest pool is shared via Arc) so the cover GET runs in parallel with the
+    // download warm-up instead of gating playback start. Joined just before play().
+    let cover_handle = track.album_cover.clone().map(|cover_id| {
+        let cover_client = client.clone();
+        thread::spawn(move || cover_client.fetch_cover(&cover_id, 320).ok())
+    });
 
     // Wait until the temp file is ready to probe/play
     loop {
@@ -535,6 +539,9 @@ pub fn run(
     let volume = shared_volume.unwrap_or_else(|| {
         Arc::new(Mutex::new(config::load().volume))
     });
+
+    // Cover is needed for rendering from here on; collect the background fetch.
+    let cover_bytes = cover_handle.and_then(|h| h.join().ok().flatten());
 
     let result = play(
         terminal,
@@ -644,6 +651,99 @@ fn download_to_file(
             }
         }
     }
+    header_ready.store(true, Ordering::Relaxed);
+    done.store(true, Ordering::Relaxed);
+}
+
+/// Progressive HiRes path. Download the DASH segments and feed them straight into
+/// ffmpeg, which stream-copies (`-c:a copy`) the fragmented-MP4 FLAC onto its
+/// stdout; we tee that growing FLAC stream into `path` as it is produced. This
+/// mirrors `download_to_file`'s progressive contract — `header_ready` fires once
+/// the first frames have landed, `done` at true EOF — so playback can begin in
+/// about a second instead of after the whole track downloads and remuxes.
+///
+/// A feeder thread writes ffmpeg's stdin while this thread drains its stdout, so
+/// neither pipe can deadlock. A fetch stall is bounded by a per-segment timeout;
+/// a missing/failed ffmpeg releases the wait immediately so the caller fails fast
+/// rather than hanging on a blank screen.
+fn stream_dash_flac(
+    segments: &[String],
+    path: &std::path::Path,
+    done: &AtomicBool,
+    header_ready: &AtomicBool,
+    dl_bytes: &AtomicU64,
+) {
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+
+    let mut child = match Command::new("ffmpeg")
+        .args(["-v", "error", "-i", "pipe:0", "-c:a", "copy", "-f", "flac", "pipe:1"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => {
+            // ffmpeg unavailable: release the wait so run() proceeds and surfaces
+            // the failure instead of spinning forever on a blank screen.
+            header_ready.store(true, Ordering::Relaxed);
+            done.store(true, Ordering::Relaxed);
+            return;
+        }
+    };
+
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    let mut stdout = child.stdout.take().expect("piped stdout");
+
+    // Feeder: pull each segment and write it into ffmpeg's stdin. A fetch error or
+    // broken pipe just ends the feed; dropping stdin signals EOF so ffmpeg
+    // finalises the FLAC stream and our stdout drain below sees true EOF.
+    let segs: Vec<String> = segments.to_vec();
+    let feeder = thread::spawn(move || {
+        let http = reqwest::blocking::Client::builder()
+            .user_agent(crate::auth::TIDAL_UA)
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_default();
+        for seg in &segs {
+            match http.get(seg).send().and_then(|r| r.error_for_status()).and_then(|r| r.bytes()) {
+                Ok(bytes) => { if stdin.write_all(&bytes).is_err() { break; } }
+                Err(_) => break,
+            }
+        }
+        // stdin dropped here → ffmpeg sees EOF
+    });
+
+    let mut file = match fs::File::create(path) {
+        Ok(f) => f,
+        Err(_) => {
+            let _ = child.kill();
+            let _ = feeder.join();
+            header_ready.store(true, Ordering::Relaxed);
+            done.store(true, Ordering::Relaxed);
+            return;
+        }
+    };
+    let mut written: u64 = 0;
+    let mut buf = vec![0u8; 65_536];
+    loop {
+        match stdout.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                let _ = file.write_all(&buf[..n]);
+                written += n as u64;
+                dl_bytes.store(written, Ordering::Relaxed);
+                if !header_ready.load(Ordering::Relaxed) && written >= BUFFER_THRESHOLD {
+                    header_ready.store(true, Ordering::Relaxed);
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    let _ = feeder.join();
+    let _ = child.wait();
     header_ready.store(true, Ordering::Relaxed);
     done.store(true, Ordering::Relaxed);
 }
